@@ -1,0 +1,6 @@
+.DS_Store
+/.agent/
+/bin/
+/dist/
+/reports/
+/coverage.out
