@@ -17,6 +17,7 @@ const (
 	outputFlag       = "--output"
 	ledgerFlag       = "--ledger"
 	cpdFlag          = "--cpd"
+	jscpdFlag        = "--jscpd"
 	maxFileBytesFlag = "--max-file-bytes"
 )
 
@@ -47,6 +48,7 @@ func parseOptions(args []string, audit bool) (commandOptions, []string, error) {
 		outputFlag:       true,
 		maxFileBytesFlag: true,
 		cpdFlag:          true,
+		jscpdFlag:        true,
 	}, false)
 	if err != nil {
 		return options, nil, err
@@ -133,7 +135,7 @@ func applyOption(options *commandOptions, option cliOption, audit bool) error {
 		"--include-generated",
 		maxFileBytesFlag,
 		"--duplicates",
-		cpdFlag:
+		cpdFlag, jscpdFlag:
 		if !audit {
 			return fmt.Errorf("%s is only valid for audit", option.name)
 		}
@@ -155,9 +157,13 @@ func applyAuditOption(options *commandOptions, option cliOption) error {
 		return nil
 	}
 
-	if option.name == cpdFlag {
+	if option.name == cpdFlag || option.name == jscpdFlag {
 		if option.value == "" {
-			return fmt.Errorf("%s requires an executable path", cpdFlag)
+			return fmt.Errorf("%s requires an executable path", option.name)
+		}
+
+		if options.config.Duplication.Tool != "" {
+			return errors.New("select only one duplication executable")
 		}
 
 		options.config.Duplication.Requested = true

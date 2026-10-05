@@ -1,13 +1,13 @@
-# Go analyzer and report contract
+# Native analyzer and report contract
 
-This document defines the first native analyzer contract. The Go analyzer is
+This document defines the native analyzer contract. The Go and TypeScript analyzer is
 deterministic and reads source files without executing target code. Renderers
-and the CLI consume `internal/report` values; they do not need to know how Go
+and the CLI consume `internal/report` values; they do not need to know how source
 syntax is traversed.
 
 ## API ownership
 
-`internal/analysis` owns filesystem discovery, Go parsing, source metrics, and
+`internal/analysis` owns filesystem discovery, Go and TypeScript parsing, source metrics, and
 verbosity findings. Its public entry point is:
 
 ```go
@@ -31,9 +31,11 @@ configuration is copied into `report.ConfigSummary`, so reports can be
 compared safely. Version and rule changes change `Analyzer.Version` or the
 configuration identity; a comparison must reject incompatible reports.
 
-The initial native engine has no third-party dependency and does not invoke a
-model, `go list`, `go test`, or target binaries. Duplication is an explicit,
-separate request. The supported adapter is pinned to CPD 5.3.0 with an
+The native engine uses Go standard-library parsing and bundled pure-Go
+tree-sitter TypeScript/TSX grammars. No language runtime or compiler is needed
+for a built CLI. It does not invoke a model, `go list`, `go test`, `tsc`, or
+target binaries. Duplication is an explicit,
+separate request. The supported adapter is compatible with CPD/jscpd major 5, without an exact version pin with an
 80-token minimum, an 8-line minimum, and a fixed advisory 100% threshold. If
 requested, the report records the selected executable, version, arguments,
 source scope (`production,test`), and result status. The threshold does not
@@ -115,7 +117,9 @@ type File struct {
 metrics by default. A path component named `vendor` is `vendor` and excluded.
 Generated code is excluded only when the source begins with the Go convention
 `^// Code generated .* DO NOT EDIT\.$` before its first non-comment,
-non-blank line. A non-Go regular file is `unsupported`. Symlinks and excluded
+non-blank line. TypeScript uses the same generated header convention. TypeScript `.test.*`,
+`.spec.*`, and `__tests__` paths are `test`. Other regular files outside
+`.go`, `.ts`, `.tsx`, `.mts`, and `.cts` are `unsupported`. Symlinks and excluded
 directories are counted in coverage but are never traversed or read.
 
 `Function` preserves raw measurements and source evidence:
@@ -175,11 +179,41 @@ machine-readable details. Rules may be expanded only with representative
 behavioral tests and calibration evidence.
 
 `Coverage` includes discovered, analyzed, excluded, unsupported, read-error,
-and parse-error counts, plus per-category counts. A scan with no analyzable Go
+and parse-error counts, plus per-category counts. A scan with no analyzable source
 files is successful only as a report-producing operation: its coverage states
 that zero files were analyzed. Any read or parse failure returns a non-nil
 error alongside the report and leaves a corresponding `File` entry. Thus a
 partial scan cannot appear clean by omission.
+
+## TypeScript measurement rules
+
+The parser reads syntax only, including TSX and declaration files; it does not
+load `tsconfig.json`, resolve imports, or type-check. Error or missing syntax
+nodes and parser timeouts are parse failures, never partial function metrics.
+Functions with bodies, methods, generators, and arrow functions are measured.
+Overload and ambient signatures have no function metrics. Named expressions
+use their binding name; anonymous expressions use a syntax digest. Class and
+nested function names retain their owner. Duplicate identities are marked
+ambiguous. Comments and syntax whitespace are ignored in fingerprints, while
+string, regex, and template contents are preserved.
+
+Cyclomatic complexity starts at 1 and counts `if`, loops, `catch`, ternaries,
+non-default switch cases, `&&`, `||`, and `??`. Nesting counts control constructs;
+nested functions are separate roots. Line ownership and mass follow the Go
+accounting rules. Duplicate branch findings compare syntax tokens. Redundant
+boolean findings require a comparison and opposite literal returns, either
+in an if/else or an if followed by a return. An explicit return type is not
+required because both paths return boolean literals. These remain review
+candidates. TypeScript currently records nested-branch structural signals;
+flat-guard, field-mapping, and assertion-call counters are Go-specific.
+
+Duplication runs on isolated production/test snapshots with Go, TypeScript,
+and TSX formats enabled. The caller provisions CPD or jscpd major 5; the
+adapter records the actual executable name and exact observed version in both
+configuration records. New minor/patch releases are accepted; other majors
+are rejected. Exact version differences still invalidate comparisons.
+TypeScript clone fingerprints use TypeScript tokens and the enclosing function
+identity, preserving literal content and stable identities after line moves.
 
 ## Comparison identity
 

@@ -1,5 +1,5 @@
 name: Deburr
-description: Run the Deburr Go analyzer and write a report for a path.
+description: Run the Deburr Go and TypeScript analyzer and write a report for a path.
 author: Kellen Miller
 
 inputs:
@@ -12,11 +12,16 @@ inputs:
     required: false
     default: github
   duplicates:
-    description: Run the opt-in CPD 5.3.0 duplication adapter.
+    description: Run the opt-in CPD/jscpd major 5 duplication adapter.
     required: false
     default: "false"
   cpd:
-    description: Optional path to a caller-provided CPD 5.3.0 executable.
+    description: Optional path to a caller-provided CPD/jscpd major 5 executable.
+    required: false
+    default: ""
+
+  jscpd:
+    description: Optional path to a caller-provided jscpd major 5 executable.
     required: false
     default: ""
 
@@ -51,6 +56,7 @@ runs:
         DEBURR_FORMAT: ${{ inputs.format }}
         DEBURR_DUPLICATES: ${{ inputs.duplicates }}
         DEBURR_CPD: ${{ inputs.cpd }}
+        DEBURR_JSCPD: ${{ inputs.jscpd }}
       run: |
         set -euo pipefail
 
@@ -70,13 +76,19 @@ runs:
             ;;
         esac
 
+        if [[ -n "$DEBURR_CPD" && -n "$DEBURR_JSCPD" ]]; then
+          printf 'Select only one of cpd and jscpd.\n' >&2
+          exit 2
+        fi
+
+        DEBURR_CPD="${DEBURR_CPD:-$DEBURR_JSCPD}"
         if [[ -n "$DEBURR_CPD" && "$DEBURR_DUPLICATES" != true ]]; then
-          printf 'The Deburr cpd input requires duplicates: true.\n' >&2
+          printf 'The Deburr cpd/jscpd input requires duplicates: true.\n' >&2
           exit 2
         fi
 
         if [[ "$DEBURR_CPD" == *$'\n'* || "$DEBURR_CPD" == *$'\r'* ]]; then
-          printf 'The Deburr cpd path must not contain newlines.\n' >&2
+          printf 'The Deburr cpd/jscpd path must not contain newlines.\n' >&2
           exit 2
         fi
 

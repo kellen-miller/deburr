@@ -91,3 +91,23 @@ func TestParseOptionsAcceptsExplicitDuplicationTool(t *testing.T) {
 		t.Fatalf("duplication = %+v", options.config.Duplication)
 	}
 }
+
+func TestJSCPDOption(t *testing.T) {
+	options, paths, err := parseOptions([]string{"repo", "--jscpd", "/tools/jscpd"}, true)
+	if err != nil || len(paths) != 1 || !options.config.Duplication.Requested || options.config.Duplication.Tool != "/tools/jscpd" {
+		t.Fatalf("options %+v, paths %v, error %v", options, paths, err)
+	}
+
+	for _, args := range [][]string{
+		{"--jscpd", ""},
+		{"--cpd", "cpd", "--jscpd", "jscpd"},
+	} {
+		if _, _, err := parseOptions(args, true); err == nil {
+			t.Fatalf("accepted invalid args %v", args)
+		}
+	}
+
+	if _, _, err := parseOptions([]string{"--jscpd", "jscpd"}, false); err == nil {
+		t.Fatal("accepted jscpd outside audit")
+	}
+}
