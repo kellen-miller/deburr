@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"io"
 	"math"
 	"os"
 	"path/filepath"
@@ -187,7 +188,7 @@ func TestAnalyzeCountsMalformedGoOnceAndReturnsError(t *testing.T) {
 func Broken( {
 `)
 
-	result, err := analysis.Analyze(t.Context(), root, analysis.DefaultConfig())
+	result, err := analysis.Analyze(t.Context(), root, analysis.DefaultConfig(), io.Discard)
 	if err == nil {
 		t.Fatal("Analyze returned nil error for malformed Go")
 	}
@@ -367,7 +368,7 @@ func TestAnalyzeNoGoInputReportsExplicitCoverage(t *testing.T) {
 
 func analyze(t *testing.T, root string) report.Report {
 	t.Helper()
-	result, err := analysis.Analyze(t.Context(), root, analysis.DefaultConfig())
+	result, err := analysis.Analyze(t.Context(), root, analysis.DefaultConfig(), io.Discard)
 	if err != nil {
 		t.Fatalf("Analyze(%q): %v", root, err)
 	}

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"go/parser"
 	"go/token"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -40,7 +41,7 @@ func Nested(value int) int {
 }
 `)
 
-	result, err := Analyze(t.Context(), root, DefaultConfig())
+	result, err := Analyze(t.Context(), root, DefaultConfig(), io.Discard)
 	if err != nil {
 		t.Fatalf("Analyze() error = %v", err)
 	}
@@ -134,11 +135,11 @@ func (Right) Run(value int) bool {
 }
 `)
 
-	leftReport, err := Analyze(t.Context(), left, DefaultConfig())
+	leftReport, err := Analyze(t.Context(), left, DefaultConfig(), io.Discard)
 	if err != nil {
 		t.Fatalf("left Analyze() error = %v", err)
 	}
-	rightReport, err := Analyze(t.Context(), right, DefaultConfig())
+	rightReport, err := Analyze(t.Context(), right, DefaultConfig(), io.Discard)
 	if err != nil {
 		t.Fatalf("right Analyze() error = %v", err)
 	}
@@ -215,11 +216,11 @@ func init() {
 }
 `)
 
-	leftReport, err := Analyze(t.Context(), left, DefaultConfig())
+	leftReport, err := Analyze(t.Context(), left, DefaultConfig(), io.Discard)
 	if err != nil {
 		t.Fatalf("left Analyze() error = %v", err)
 	}
-	rightReport, err := Analyze(t.Context(), right, DefaultConfig())
+	rightReport, err := Analyze(t.Context(), right, DefaultConfig(), io.Discard)
 	if err != nil {
 		t.Fatalf("right Analyze() error = %v", err)
 	}
@@ -261,11 +262,11 @@ func Outer() {
 }
 `)
 
-	leftReport, err := Analyze(t.Context(), left, DefaultConfig())
+	leftReport, err := Analyze(t.Context(), left, DefaultConfig(), io.Discard)
 	if err != nil {
 		t.Fatalf("left Analyze() error = %v", err)
 	}
-	rightReport, err := Analyze(t.Context(), right, DefaultConfig())
+	rightReport, err := Analyze(t.Context(), right, DefaultConfig(), io.Discard)
 	if err != nil {
 		t.Fatalf("right Analyze() error = %v", err)
 	}
@@ -384,7 +385,7 @@ func Branches(value int) int {
 }
 `)
 
-	result, err := Analyze(t.Context(), root, DefaultConfig())
+	result, err := Analyze(t.Context(), root, DefaultConfig(), io.Discard)
 	if err != nil {
 		t.Fatalf("Analyze() error = %v", err)
 	}
@@ -415,7 +416,7 @@ func TestAnalyzeCoverageClassificationAndSymlinks(t *testing.T) {
 		t.Skipf("symlinks unavailable: %v", err)
 	}
 
-	result, err := Analyze(t.Context(), root, DefaultConfig())
+	result, err := Analyze(t.Context(), root, DefaultConfig(), io.Discard)
 	if err != nil {
 		t.Fatalf("Analyze() error = %v", err)
 	}
@@ -455,7 +456,7 @@ func TestAnalyzeParseFailureIsReportedOnce(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "broken.go", "package broken\nfunc (")
 
-	result, err := Analyze(t.Context(), root, DefaultConfig())
+	result, err := Analyze(t.Context(), root, DefaultConfig(), io.Discard)
 	if err == nil {
 		t.Fatal("Analyze() error = nil, want parse failure")
 	}
@@ -474,8 +475,8 @@ func TestAnalyzeDeterministicAndExplicitDuplicationStatus(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "sample.go", "package sample\nfunc Main() {}\n")
 	cfg := DefaultConfig()
-	first, firstErr := Analyze(t.Context(), root, cfg)
-	second, secondErr := Analyze(t.Context(), root, cfg)
+	first, firstErr := Analyze(t.Context(), root, cfg, io.Discard)
+	second, secondErr := Analyze(t.Context(), root, cfg, io.Discard)
 	if firstErr != nil || secondErr != nil {
 		t.Fatalf("Analyze() errors = %v, %v", firstErr, secondErr)
 	}
@@ -496,7 +497,7 @@ func TestAnalyzeDeterministicAndExplicitDuplicationStatus(t *testing.T) {
 
 	cfg.Duplication.Requested = true
 	cfg.Duplication.Tool = filepath.Join(root, "missing-cpd")
-	requested, requestedErr := Analyze(t.Context(), root, cfg)
+	requested, requestedErr := Analyze(t.Context(), root, cfg, io.Discard)
 	if requestedErr == nil {
 		t.Fatal("requested duplication error = nil, want unavailable tool")
 	}
@@ -513,7 +514,7 @@ func TestAnalyzeDeterministicAndExplicitDuplicationStatus(t *testing.T) {
 func TestAnalyzeNonGoInputIsExplicitlyUnsupported(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "notes.txt", "notes\n")
-	result, err := Analyze(t.Context(), root, DefaultConfig())
+	result, err := Analyze(t.Context(), root, DefaultConfig(), io.Discard)
 	if err != nil {
 		t.Fatalf("Analyze() error = %v", err)
 	}
@@ -552,7 +553,7 @@ func TestAnalyzeDuplicationAdapterReportsNormalizedClones(t *testing.T) {
 	cfg.Duplication.Requested = true
 	cfg.Duplication.MinTokens = 20
 	cfg.Duplication.MinLines = 3
-	result, err := Analyze(t.Context(), root, cfg)
+	result, err := Analyze(t.Context(), root, cfg, io.Discard)
 	if err != nil {
 		t.Fatalf("Analyze() error = %v", err)
 	}
@@ -599,7 +600,7 @@ func TestAnalyzeDuplicationAdapterReportsNormalizedClones(t *testing.T) {
 		"single.go",
 		"package sample\nfunc One() int {\n"+duplicate+"}\nfunc Two() int {\n"+duplicate+"}\n",
 	)
-	single, err := Analyze(t.Context(), singleRoot, cfg)
+	single, err := Analyze(t.Context(), singleRoot, cfg, io.Discard)
 	if err != nil {
 		t.Fatalf("single-file Analyze() error = %v", err)
 	}
@@ -860,7 +861,7 @@ func TestAnalyzeDuplicationVersionMismatchIsIncomplete(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.Duplication.Requested = true
 	cfg.Duplication.Tool = writeVersionTool(t, "4.0.0")
-	result, err := Analyze(t.Context(), root, cfg)
+	result, err := Analyze(t.Context(), root, cfg, io.Discard)
 	if err == nil {
 		t.Fatal("Analyze() error = nil, want unsupported major failure")
 	}

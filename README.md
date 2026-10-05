@@ -48,7 +48,9 @@ deburr compare /tmp/deburr-before.json /tmp/deburr-after.json
 
 Reports can be rendered as `text` (default), `json`, `html`, or `github`.
 `audit --output` rejects paths inside the audited directory, so keep reports
-somewhere else. Run `deburr audit --help` for all flags.
+somewhere else. Audits print phase updates and file counts to stderr; stdout
+stays report-only. Use `--quiet` to suppress progress. Run `deburr audit --help`
+for all flags.
 
 ### Baselines and versions
 
@@ -148,6 +150,11 @@ findings alone.
 `deburr guide cleanup` prints the workflow for acting on a report: keep a
 baseline, make behavior-preserving changes, and compare. The portable
 [skills/deburr/SKILL.md](skills/deburr/SKILL.md) skill invokes the same guide.
+
+## Development
+
+Run `go test ./...`. See [docs/testing.md](docs/testing.md) for the pinned
+VS Code integration test and known TypeScript parser limitations.
 
 ## License
 

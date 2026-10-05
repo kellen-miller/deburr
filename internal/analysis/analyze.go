@@ -7,6 +7,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -61,6 +62,7 @@ type sourceFile struct {
 }
 
 type analysisState struct {
+	progress  io.Writer
 	root      string
 	base      string
 	manifest  string
@@ -74,8 +76,9 @@ type analysisState struct {
 }
 
 // Analyze reads and parses Go and TypeScript source under root.
-// No target code or build hooks are executed.
-func Analyze(ctx context.Context, root string, cfg Config) (report.Report, error) {
+// No target code or build hooks are executed. Progress is best effort; use
+// io.Discard to suppress it.
+func Analyze(ctx context.Context, root string, cfg Config, progress io.Writer) (report.Report, error) {
 	cfg = cfg.normalized()
 	result := report.Report{
 		SchemaVersion: report.SchemaVersion,
@@ -101,7 +104,9 @@ func Analyze(ctx context.Context, root string, cfg Config) (report.Report, error
 		return result, fmt.Errorf("stat input: %w", err)
 	}
 
-	state := &analysisState{root: input, cfg: cfg, report: result}
+	// Progress is best effort and separate from the report's output stream.
+	_, _ = fmt.Fprintln(progress, "deburr: scanning Go and TypeScript source")
+	state := &analysisState{root: input, cfg: cfg, report: result, progress: progress}
 	if info.Mode()&os.ModeSymlink != 0 {
 		state.base = filepath.Dir(input)
 		state.visitSymlink(filepath.Base(input), info)
@@ -121,6 +126,10 @@ func Analyze(ctx context.Context, root string, cfg Config) (report.Report, error
 		})
 	}
 
+	_, _ = fmt.Fprintf(progress, "deburr: scan finished: %d files, %d analyzed, %d errors\n",
+		state.report.Coverage.Discovered, state.report.Coverage.Analyzed,
+		state.report.Coverage.ReadErrors+state.report.Coverage.ParseErrors)
+	_, _ = fmt.Fprintln(progress, "deburr: summarizing metrics")
 	state.finish()
 	if cfg.Duplication.Requested {
 		duplication, duplicationErr := runDuplication(ctx, state)
@@ -417,6 +426,12 @@ func (s *analysisState) recordFile(file *sourceFile) {
 		s.report.Coverage.ReadErrors++
 	case report.FileParseError:
 		s.report.Coverage.ParseErrors++
+	}
+
+	if s.report.Coverage.Discovered == 1 || s.report.Coverage.Discovered%100 == 0 {
+		_, _ = fmt.Fprintf(s.progress, "deburr: scanned %d files (%d analyzed, %d excluded, %d unsupported, %d errors)\n",
+			s.report.Coverage.Discovered, s.report.Coverage.Analyzed, s.report.Coverage.Excluded,
+			s.report.Coverage.Unsupported, s.report.Coverage.ReadErrors+s.report.Coverage.ParseErrors)
 	}
 }
 

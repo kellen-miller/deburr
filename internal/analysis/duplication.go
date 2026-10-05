@@ -81,6 +81,7 @@ func (b *boundedBuffer) Write(value []byte) (int, error) {
 }
 
 func runDuplication(parent context.Context, state *analysisState) (*report.Duplication, error) {
+	_, _ = fmt.Fprintln(state.progress, "deburr: loading duplication config")
 	config, files, err := configureDuplication(state)
 	result := &report.Duplication{Status: report.DuplicationError, Config: state.report.Config.Duplication}
 	if err != nil {
@@ -94,6 +95,7 @@ func runDuplication(parent context.Context, state *analysisState) (*report.Dupli
 		return result, err
 	}
 
+	_, _ = fmt.Fprintln(state.progress, "deburr: checking duplication detector")
 	version, err := verifyDuplicationTool(parent, state.cfg.Duplication, toolPath)
 	result.Config.Version = version
 	result.Config.Tool = toolLabel(toolPath)
@@ -103,6 +105,7 @@ func runDuplication(parent context.Context, state *analysisState) (*report.Dupli
 		return result, err
 	}
 
+	_, _ = fmt.Fprintf(state.progress, "deburr: using %s %s; %d files selected for duplication\n", result.Config.Tool, version, len(files))
 	tempRoot, err := os.MkdirTemp("", duplicationSnapshotPrefix)
 	if err != nil {
 		result.Error = "create duplication snapshot: " + err.Error()
@@ -146,12 +149,15 @@ func runDuplication(parent context.Context, state *analysisState) (*report.Dupli
 			tempRoot,
 			category,
 			files,
+			state.progress,
 		)
 		if categoryErr != nil {
 			result.Error = categoryErr.Error()
 			return cleanupSnapshot(categoryErr)
 		}
 
+		_, _ = fmt.Fprintf(state.progress, "deburr: %s duplication finished: %.2f%%; %d of %d files analyzed\n",
+			category, measurement.percentage, measurement.files, len(files))
 		clones = append(clones, measurement.clones...)
 		result.Percentages = append(result.Percentages, report.DuplicationPercentage{Category: category, Percentage: measurement.percentage, Files: measurement.files, SelectedFiles: len(files)})
 	}
@@ -265,7 +271,9 @@ func runDuplicationCategory(
 	toolPath, configPath, tempRoot string,
 	category report.Category,
 	files []*sourceFile,
+	progress io.Writer,
 ) (duplicationMeasurement, error) {
+	_, _ = fmt.Fprintf(progress, "deburr: snapshotting %d %s files\n", len(files), category)
 	categoryRoot, selected, err := snapshotDuplicationSources(tempRoot, category, files)
 	if err != nil {
 		return duplicationMeasurement{}, err
@@ -296,6 +304,7 @@ func runDuplicationCategory(
 		categoryRoot,
 	}
 
+	_, _ = fmt.Fprintf(progress, "deburr: running %s for %s duplication\n", toolLabel(toolPath), category)
 	ctx, cancel := context.WithTimeout(parent, duplicationTimeout)
 	defer cancel()
 	_, stderr, commandErr := runBoundedCommand(ctx, toolPath, args, tempRoot)

@@ -27,6 +27,7 @@ type commandOptions struct {
 	output string
 	config analysis.Config
 	help   bool
+	quiet  bool
 }
 
 type cliOption struct {
@@ -131,7 +132,7 @@ func applyOption(options *commandOptions, option cliOption, audit bool) error {
 
 		options.output = option.value
 		return nil
-	case "--exclude-tests",
+	case "--quiet", "--exclude-tests",
 		"--include-testdata",
 		"--include-vendor",
 		"--include-generated",
@@ -188,6 +189,8 @@ func applyAuditOption(options *commandOptions, option cliOption) error {
 	}
 
 	switch option.name {
+	case "--quiet":
+		options.quiet = true
 	case "--exclude-tests":
 		options.config.ExcludeTests = true
 	case "--include-testdata":

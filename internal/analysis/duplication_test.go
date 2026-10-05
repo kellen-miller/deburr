@@ -1,12 +1,16 @@
 package analysis
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/kellen-miller/deburr/internal/report"
 )
 
 // Re-execute the test binary as a portable caller-provided detector.
@@ -53,7 +57,7 @@ func TestDuplicationAcceptsMajorAndRecordsVersion(t *testing.T) {
 			cfg := DefaultConfig()
 			cfg.Duplication.Requested = true
 			cfg.Duplication.Tool = writeVersionTool(t, version)
-			result, err := Analyze(t.Context(), root, cfg)
+			result, err := Analyze(t.Context(), root, cfg, io.Discard)
 			if strings.HasPrefix(version, "5.") {
 				if err != nil || result.Duplication.Config.Version != version || result.Config.Duplication.Version != version {
 					t.Fatalf("version provenance = %+v, error %v", result.Duplication, err)
@@ -67,5 +71,27 @@ func TestDuplicationAcceptsMajorAndRecordsVersion(t *testing.T) {
 				t.Fatal("unsupported version accepted")
 			}
 		})
+	}
+}
+
+func TestDuplicationProgressNamesDetectorAndCategory(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, root, "source.ts", "export function value() { return 42; }\n")
+	cfg := DefaultConfig()
+	cfg.Duplication = DuplicationConfig{Requested: true, Tool: writeVersionTool(t, "5.4.0")}
+	var progress bytes.Buffer
+	result, err := Analyze(t.Context(), root, cfg, &progress)
+	if err != nil || result.Duplication.Status != report.DuplicationMeasured {
+		t.Fatalf("duplication failed: %+v, %v", result.Duplication, err)
+	}
+
+	previous := -1
+	for _, message := range []string{"loading duplication config", "checking duplication detector", "5.4.0; 1 files selected", "snapshotting 1 production files", "for production duplication", "production duplication finished: 0.00%; 1 of 1 files analyzed"} {
+		position := strings.Index(progress.String(), message)
+		if position <= previous {
+			t.Fatalf("missing/out-of-order %q: %s", message, progress.String())
+		}
+
+		previous = position
 	}
 }
