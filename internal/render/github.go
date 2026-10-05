@@ -122,12 +122,23 @@ func writeGitHubCoverage(out *strings.Builder, value *report.Report) {
 	}
 
 	if value.Coverage.Analyzed == 0 {
-		fmt.Fprint(out, "::notice title=deburr analysis::no analyzable Go files\n")
+		fmt.Fprint(out, "::notice title=deburr analysis::no analyzable Go or TypeScript files\n")
 	}
 
 	if value.Duplication != nil && value.Duplication.Status == report.DuplicationError {
 		fmt.Fprintf(out, "::error title=deburr duplication::%s\n", escapeCommandValue(value.Duplication.Error))
 	}
+	if value.Duplication != nil && value.Duplication.Status == report.DuplicationMeasured {
+		for _, measured := range value.Duplication.Percentages {
+			fmt.Fprintf(out, "::notice title=deburr duplication::%s: %.2f%% duplication across %d files; threshold=%s%%\n",
+				measured.Category, measured.Percentage, measured.Files, escapeCommandValue(value.Duplication.Config.Threshold))
+		}
+
+		if value.Duplication.ThresholdExceeded && value.Duplication.Config.EnforceThreshold {
+			fmt.Fprintf(out, "::error title=deburr duplication::duplication exceeds configured threshold %s%%\n", escapeCommandValue(value.Duplication.Config.Threshold))
+		}
+	}
+
 }
 
 func writeGitHubFileFailures(out *strings.Builder, value *report.Report) {

@@ -41,6 +41,8 @@ Flags:
   --duplicates          run CPD/jscpd major 5 from PATH
   --cpd PATH            run a CPD/jscpd executable (major 5)
   --jscpd PATH          alias for --cpd PATH
+  --duplicates-config FILE  use an explicit .jscpd.json config
+  --enforce-duplicates-threshold  fail if either scope exceeds its threshold
   --help                show this help
 `
 

@@ -404,3 +404,24 @@ func sampleReport() report.Report {
 		},
 	}
 }
+
+func TestDuplicationEffectiveConfigurationChanges(t *testing.T) {
+	for _, change := range []struct {
+		name  string
+		apply func(*report.DuplicationConfig)
+	}{
+		{"ignore", func(config *report.DuplicationConfig) { config.Ignore = []string{"**/fixture.ts"} }},
+		{"gitignore", func(config *report.DuplicationConfig) { config.GitignoreDigest = "changed" }},
+		{"root", func(config *report.DuplicationConfig) { config.ScopeRoot = ".." }},
+		{"enforcement", func(config *report.DuplicationConfig) { config.EnforceThreshold = true }},
+	} {
+		t.Run(change.name, func(t *testing.T) {
+			before, after := sampleReport(), sampleReport()
+			change.apply(&after.Duplication.Config)
+			comparison := compareDuplication(before.Duplication, after.Duplication)
+			if comparison.Comparable {
+				t.Fatal("changed detector configuration considered comparable")
+			}
+		})
+	}
+}

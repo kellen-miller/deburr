@@ -111,3 +111,23 @@ func TestJSCPDOption(t *testing.T) {
 		t.Fatal("accepted jscpd outside audit")
 	}
 }
+
+func TestDuplicationConfigurationOptions(t *testing.T) {
+	options, paths, err := parseOptions([]string{"repo", "--duplicates-config", "config.json", "--enforce-duplicates-threshold"}, true)
+	if err != nil || len(paths) != 1 || !options.config.Duplication.Requested || !options.config.Duplication.EnforceThreshold || options.config.Duplication.ConfigPath != "config.json" {
+		t.Fatalf("options %+v, paths %v, error %v", options, paths, err)
+	}
+
+	for _, args := range [][]string{
+		{"--duplicates-config", ""},
+		{"--enforce-duplicates-threshold=false"},
+	} {
+		if _, _, err := parseOptions(args, true); err == nil {
+			t.Fatalf("accepted invalid args %v", args)
+		}
+	}
+
+	if _, _, err := parseOptions([]string{"--duplicates-config", "config.json"}, false); err == nil {
+		t.Fatal("accepted duplication configuration outside audit")
+	}
+}

@@ -148,7 +148,9 @@ code { white-space: pre-wrap; overflow-wrap: anywhere; }
 })();
 </script>
 <h2>Duplication</h2>
-{{if .Duplication}}<p>Status <code>{{.Duplication.Status}}</code>; tool <code>{{.Duplication.Config.Tool}}</code>; version <code>{{.Duplication.Config.Version}}</code>; {{.CloneCount}} clones are included in the complete review inventory above{{with .Duplication.Error}}; error <span class="error">{{.}}</span>{{end}}.</p>{{else}}<p>Status <code>not_requested</code>; no clone rows are available.</p>{{end}}
+{{if .Duplication}}<p>Status <code>{{.Duplication.Status}}</code>; tool <code>{{.Duplication.Config.Tool}}</code>; version <code>{{.Duplication.Config.Version}}</code>; {{.CloneCount}} clones are included in the complete review inventory above{{with .Duplication.Error}}; error <span class="error">{{.}}</span>{{end}}.</p><p>Mode <code>{{.Duplication.Config.Mode}}</code>; threshold {{.Duplication.Config.Threshold}}%; enforcement <code>{{.Duplication.Config.EnforceThreshold}}</code>; exceeded <code>{{.Duplication.ThresholdExceeded}}</code>.</p>
+{{range .Duplication.Percentages}}<p>{{.Category}}: {{printf "%.2f" .Percentage}}% duplication across {{.Files}} files.</p>{{end}}
+{{else}}<p>Status <code>not_requested</code>; no clone rows are available.</p>{{end}}
 <details><summary>File inventory ({{len .Files}})</summary>
 <table><tr><th>Path</th><th>Category</th><th>Status</th><th>Bytes</th><th>Lines</th><th>Code lines</th><th>Reason</th><th>Error</th></tr>
 {{range .Files}}<tr><td><code>{{.Path}}</code></td><td>{{.Category}}</td><td>{{.Status}}</td><td>{{.Bytes}}</td><td>{{.Lines}}</td><td>{{.CodeLines}}</td><td>{{.Reason}}</td><td class="error">{{.Error}}</td></tr>{{else}}<tr><td colspan="8">No files.</td></tr>{{end}}

@@ -68,6 +68,36 @@ Reports record the exact installed version and settings; comparisons across
 versions remain incompatible so detector changes cannot appear as code
 improvements. Duplication remains off by default.
 
+Duplication discovers the nearest `.jscpd.json` from the audited directory
+(or a file's parent), searching up to the repository root. Use
+`--duplicates-config FILE` to select another configuration. Paths and globs
+are relative to the config directory and narrow duplication only; native
+coverage is unchanged. `.gitignore` rules, including nested rules and
+negations, are applied to original files before snapshotting, unless
+`gitignore: false` is configured. No Git executable is required for this.
+
+Supported scope settings are `path`, `ignore`, `pattern`, `gitignore`, and
+`format` (intersected with Go/TypeScript/TSX). Detection settings include
+`minTokens`, `minLines`, `maxLines`, `maxSize`, `mode`, `threshold`,
+`ignoreCase`, `ignoreIdentifiers`, `ignoreLiterals`, `ignoreAnnotations`,
+`ignorePattern`, and `skipLocal`. Deburr owns `reporters`, `output`, `workers`,
+`exitCode`, and presentation settings. Other settings are rejected explicitly.
+Config and ignore files are limited to 1 MiB; snapshot sources retain the
+16 MiB adapter limit.
+
+A configured threshold is advisory by default. Add
+`--enforce-duplicates-threshold` to fail if either production or test
+percentage exceeds it; the report keeps status `measured`, clone evidence,
+percentages, and `threshold_exceeded`. Native source categories still apply,
+so these percentages can differ from a standalone all-language detector run.
+Reports retain effective settings and a digest of applicable `.gitignore`
+files so configuration changes invalidate comparisons.
+
+```sh
+deburr audit . --duplicates --duplicates-config .jscpd.json --format json
+deburr audit . --duplicates --enforce-duplicates-threshold --format json
+```
+
 The built CLI needs neither Go nor Node installed for native analysis. Go
 is required to build Deburr, including by the current GitHub Action.
 TypeScript uses bundled pure-Go tree-sitter grammars, without running `tsc`,
@@ -129,7 +159,8 @@ current source on `main`; pin a reviewed commit for repeatable runs:
 
 Supported inputs are `path` (default `.`), `format` (`text`, `json`, `html`,
 or `github`; default `github`), `duplicates` (default `false`), `cpd`, and
-`jscpd`. Set `duplicates: true` to opt into the same CPD/jscpd major 5 adapter
+`jscpd`, `duplicates-config`, and `enforce-duplicates-threshold` (default
+`false`). Set `duplicates: true` to opt into the same CPD/jscpd major 5 adapter
 exposed by the CLI. The optional detector input selects a caller-provided
 CPD/jscpd major 5 executable;
 the action does not download or install an analyzer. It always writes to a
@@ -159,11 +190,14 @@ workflow and pass its executable path if it is not on `PATH`:
     format: json
     duplicates: true
     cpd: /opt/cpd/bin/cpd
+    duplicates-config: .jscpd.json
+    enforce-duplicates-threshold: true
 ```
 
 Use `jscpd` instead of `cpd` to select that executable; specifying both is an
-error. The action rejects a detector path unless `duplicates` is explicitly
-`true`, and rejects executables outside supported major 5. This keeps duplication
+error. Detector paths, config paths, and threshold enforcement require
+`duplicates: true`. Config input paths are relative to the workspace unless
+absolute. The action rejects executables outside supported major 5. This keeps duplication
 provisioning visible to the caller while the action remains a thin wrapper
 around the CLI.
 
