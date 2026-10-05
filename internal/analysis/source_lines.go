@@ -6,6 +6,7 @@ import (
 	"go/parser"
 	"go/scanner"
 	"go/token"
+	"strings"
 )
 
 func sourceLineCounts(filename string, source []byte) (int, int) {
@@ -35,6 +36,10 @@ func physicalLineCount(source []byte) int {
 }
 
 func sourceLineMap(filename string, source []byte) []bool {
+	if isTypeScriptPath(filename) {
+		return typescriptLineMap(filename, source)
+	}
+
 	lineCode := make([]bool, physicalLineCount(source)+1)
 	file := token.NewFileSet().AddFile(filename, -1, len(source))
 	var sourceScanner scanner.Scanner
@@ -86,7 +91,26 @@ func tokenEndLine(file *token.File, source []byte, pos token.Pos, tok token.Toke
 	return file.PositionFor(file.Pos(endOffset), false).Line
 }
 
-func isGenerated(source []byte) bool {
+func isGenerated(path string, source []byte) bool {
+	if isTypeScriptPath(path) {
+		for _, line := range strings.Split(string(source), "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" {
+				continue
+			}
+
+			if !strings.HasPrefix(line, "//") {
+				break
+			}
+
+			if strings.HasPrefix(line, "// Code generated ") && strings.HasSuffix(line, " DO NOT EDIT.") {
+				return true
+			}
+		}
+
+		return false
+	}
+
 	file, err := parser.ParseFile(
 		token.NewFileSet(),
 		"generated.go",

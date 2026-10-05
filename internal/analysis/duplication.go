@@ -82,7 +82,11 @@ func runDuplication(parent context.Context, state *analysisState) (*report.Dupli
 		return result, err
 	}
 
-	if err := verifyDuplicationTool(parent, state.cfg.Duplication, toolPath); err != nil {
+	version, err := verifyDuplicationTool(parent, state.cfg.Duplication, toolPath)
+	result.Config.Version = version
+	result.Config.Tool = toolLabel(toolPath)
+	state.report.Config.Duplication = result.Config
+	if err != nil {
 		result.Error = err.Error()
 		return result, err
 	}
@@ -170,7 +174,16 @@ func duplicationGroups(files []*sourceFile) map[report.Category][]*sourceFile {
 }
 
 func resolveDuplicationTool(tool string) (string, error) {
+	automatic := tool == ""
+	if automatic {
+		tool = duplicationTool
+	}
+
 	path, err := exec.LookPath(tool)
+	if err != nil && automatic {
+		path, err = exec.LookPath("jscpd")
+	}
+
 	if err != nil {
 		return "", fmt.Errorf("duplication tool %q is unavailable", toolLabel(tool))
 	}
@@ -183,16 +196,16 @@ func resolveDuplicationTool(tool string) (string, error) {
 	return path, nil
 }
 
-func verifyDuplicationTool(parent context.Context, config DuplicationConfig, toolPath string) error {
+func verifyDuplicationTool(parent context.Context, config DuplicationConfig, toolPath string) (string, error) {
 	ctx, cancel := context.WithTimeout(parent, duplicationTimeout)
 	defer cancel()
 	stdout, stderr, err := runBoundedCommand(ctx, toolPath, []string{"--version"}, "")
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			return errors.New("duplication tool version check timed out")
+			return "", errors.New("duplication tool version check timed out")
 		}
 
-		return fmt.Errorf(
+		return "", fmt.Errorf(
 			"duplication tool %q version check failed: %s",
 			toolLabel(config.Tool),
 			commandError(err, stderr),
@@ -201,19 +214,19 @@ func verifyDuplicationTool(parent context.Context, config DuplicationConfig, too
 
 	version := semanticVersionPattern.FindString(string(stdout))
 	if version == "" {
-		return fmt.Errorf("duplication tool %q did not report a semantic version", toolLabel(config.Tool))
+		return "", fmt.Errorf("duplication tool %q did not report a semantic version", toolLabel(config.Tool))
 	}
 
-	if version != config.Version {
-		return fmt.Errorf(
-			"duplication tool %q version %s is unsupported; pinned version is %s",
+	if strings.Split(version, ".")[0] != duplicationToolMajor {
+		return version, fmt.Errorf(
+			"duplication tool %q version %s is unsupported; supported major is %s",
 			toolLabel(config.Tool),
 			version,
-			config.Version,
+			duplicationToolMajor,
 		)
 	}
 
-	return nil
+	return version, nil
 }
 
 func runDuplicationCategory(
@@ -238,7 +251,7 @@ func runDuplicationCategory(
 	}
 
 	args := []string{
-		"--format", "go",
+		"--format", "go,typescript,tsx",
 		"--min-tokens", strconv.Itoa(config.MinTokens),
 		"--min-lines", strconv.Itoa(config.MinLines),
 		"--mode", "mild",

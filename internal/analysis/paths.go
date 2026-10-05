@@ -25,6 +25,10 @@ func categoryForPath(path string) report.Category {
 			return report.CategoryVendor
 		}
 
+		if part == "__tests__" && isTypeScriptPath(path) {
+			return report.CategoryTest
+		}
+
 		if part == "testdata" {
 			return report.CategoryTestdata
 		}
@@ -32,6 +36,14 @@ func categoryForPath(path string) report.Category {
 
 	if strings.HasSuffix(parts[len(parts)-1], "_test.go") {
 		return report.CategoryTest
+	}
+
+	name := parts[len(parts)-1]
+	if isTypeScriptPath(name) {
+		stem := strings.TrimSuffix(name, filepath.Ext(name))
+		if strings.HasSuffix(stem, ".test") || strings.HasSuffix(stem, ".spec") {
+			return report.CategoryTest
+		}
 	}
 
 	return report.CategoryProduction
@@ -67,4 +79,17 @@ func cleanError(err error) string {
 	}
 
 	return err.Error()
+}
+
+func isTypeScriptPath(path string) bool {
+	switch filepath.Ext(path) {
+	case ".ts", ".tsx", ".mts", ".cts":
+		return true
+	default:
+		return false
+	}
+}
+
+func supportedSourcePath(path string) bool {
+	return strings.HasSuffix(path, ".go") || isTypeScriptPath(path)
 }
