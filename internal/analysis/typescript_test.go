@@ -187,7 +187,7 @@ func TestTypeScriptLiteralsAndGeneratedCoverage(t *testing.T) {
 func TestTypeScriptCloneIdentity(t *testing.T) {
 	source := []byte("export function value() {\n  return `hello world`;\n}\n")
 	shifted := append([]byte("// comment\n"), source...)
-	before, err := normalizeCPDClones([]cpdDuplicate{{
+	before, err := normalizeTestCPDClones(t, []cpdDuplicate{{
 		FirstFile:  cpdFile{Name: "one.ts", StartLoc: cpdPoint{Line: 2, Column: 2}, EndLoc: cpdPoint{Line: 2, Column: 23}},
 		SecondFile: cpdFile{Name: "two.ts", StartLoc: cpdPoint{Line: 2, Column: 2}, EndLoc: cpdPoint{Line: 2, Column: 23}},
 	}}, report.CategoryProduction, "", map[string][]byte{"one.ts": source, "two.ts": source})
@@ -195,7 +195,7 @@ func TestTypeScriptCloneIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	after, err := normalizeCPDClones([]cpdDuplicate{{
+	after, err := normalizeTestCPDClones(t, []cpdDuplicate{{
 		FirstFile:  cpdFile{Name: "one.ts", StartLoc: cpdPoint{Line: 3, Column: 2}, EndLoc: cpdPoint{Line: 3, Column: 23}},
 		SecondFile: cpdFile{Name: "two.ts", StartLoc: cpdPoint{Line: 3, Column: 2}, EndLoc: cpdPoint{Line: 3, Column: 23}},
 	}}, report.CategoryProduction, "", map[string][]byte{"one.ts": shifted, "two.ts": shifted})
@@ -215,6 +215,117 @@ func TestTypeScriptBooleanGuardsIgnoreComments(t *testing.T) {
 		result, err := Analyze(t.Context(), root, DefaultConfig())
 		if err != nil || len(result.Findings) != 1 || result.Findings[0].Rule != "redundant-boolean-return" {
 			t.Fatalf("findings %+v, error %v", result.Findings, err)
+		}
+	}
+}
+
+func normalizeTestCPDClones(t *testing.T, duplicates []cpdDuplicate, category report.Category, root string, selected map[string][]byte) ([]report.Clone, error) {
+	t.Helper()
+	state := analysisState{}
+	files := make([]*sourceFile, 0, len(selected))
+	for path, source := range selected {
+		file := &sourceFile{path: path, source: source, category: category, status: report.FileAnalyzed}
+		state.parseFile(file)
+		if file.status != report.FileAnalyzed {
+			t.Fatalf("parse clone fixture %s: %s", path, file.err)
+		}
+
+		files = append(files, file)
+	}
+
+	return normalizeCPDClones(duplicates, category, root, selected, buildCloneSourceScopes(files))
+}
+
+func TestTypeScriptNestedControls(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, root, "nested.ts", `function nested(n: number) {
+  if (n > 0) {
+    for (let i = 0; i < n; i++) {
+      while (n > 1) { n--; }
+      switch (n) { case 1: break; }
+    }
+  }
+}`)
+	result, err := Analyze(t.Context(), root, DefaultConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	function := result.Functions[0]
+	if function.StructuralSignals.NestedBranches != 3 || function.MaxNesting != 3 {
+		t.Fatalf("nested control metrics: %+v", function)
+	}
+}
+
+func TestTypeScriptClassFunctionOwners(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, root, "owners.ts", `abstract class A { run() { const nested = () => 1; return nested(); } }
+abstract class B { run() { return 2; } }
+function factory() {
+  class Inner { run() { return 3; } }
+  return Inner;
+}
+function run() { return 4; }
+`)
+	result, err := Analyze(t.Context(), root, DefaultConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	names := make(map[string]bool)
+	for _, function := range result.Functions {
+		if function.IdentityAmbiguous {
+			t.Fatalf("class owner lost: %+v", function)
+		}
+
+		names[function.Name] = true
+	}
+
+	for _, name := range []string{"A.run", "A.run.nested", "B.run", "factory", "factory.Inner.run", "run"} {
+		if !names[name] {
+			t.Fatalf("missing %s in %+v", name, names)
+		}
+	}
+}
+
+func TestTypeScriptSharedParseMetadata(t *testing.T) {
+	source := []byte("function value() { return 1; }\n")
+	file := &sourceFile{path: "source.ts", source: source, status: report.FileAnalyzed}
+	state := analysisState{}
+	state.parseFile(file)
+	if len(state.failures) != 0 || file.codeLines != 1 || len(file.tsFunctions) != 1 || len(file.tsTokens) == 0 {
+		t.Fatalf("parsed metadata: %+v, failures: %+v", file, state.failures)
+	}
+
+	scope := buildCloneSourceScopes([]*sourceFile{file})[file.path]
+	endpoint, err := normalizeCloneEndpoint(report.Location{
+		Path: file.path, Start: report.Position{Line: 1, Column: 20}, End: report.Position{Line: 1, Column: 28},
+	}, scope)
+	if err != nil || endpoint.scope != state.functions[0].ID {
+		t.Fatalf("clone endpoint should belong to parsed function: %+v, %v", endpoint, err)
+	}
+
+	broken := &sourceFile{path: "broken.ts", source: []byte("function broken( {"), status: report.FileAnalyzed}
+	state.parseFile(broken)
+	if broken.status != report.FileParseError || len(state.failures) != 1 || len(broken.tsTokens) != 0 || len(broken.lineCode) != 0 {
+		t.Fatalf("failed parse must not yield measurements: %+v", broken)
+	}
+}
+
+func TestTypeScriptExcludedCoverageCounts(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, root, "valid.test.ts", "// comment\nfunction value() {\n  return 1;\n}\n")
+	writeTestFile(t, root, "invalid.test.ts", "function broken( {\n")
+	cfg := DefaultConfig()
+	cfg.ExcludeTests = true
+	result, err := Analyze(t.Context(), root, cfg)
+	if err != nil || len(result.Functions) != 0 || result.Coverage.Excluded != 2 || result.Coverage.ParseErrors != 0 {
+		t.Fatalf("exclusion must own status: %+v, %v", result, err)
+	}
+
+	for _, file := range result.Files {
+		if file.Path == "valid.test.ts" && file.CodeLines != 3 {
+			t.Fatalf("valid excluded source lost code-line counts: %+v", file)
 		}
 	}
 }

@@ -25,7 +25,13 @@ func parseTypeScript(path string, source []byte) (*gotreesitter.Tree, *gotreesit
 	}
 
 	parser := gotreesitter.NewParser(language)
-	parser.SetTimeoutMicros(2_000_000)
+	// Source-derived work limits make parse outcomes independent of host speed.
+	parser.SetParseWorkLimits(gotreesitter.ParseWorkLimits{
+		IterationLimit:  max(10_000, len(source)*30),
+		StackDepthLimit: max(1_000, len(source)*2),
+		NodeLimit:       max(300_000, len(source)*52),
+	})
+	parser.SetMemoryBudgetBytes(max(512*1024*1024, int64(len(source))*512))
 	tree, err := parser.ParseStrict(source)
 	if err != nil {
 		if tree != nil {
@@ -43,14 +49,7 @@ func parseTypeScript(path string, source []byte) (*gotreesitter.Tree, *gotreesit
 	return tree, language, nil
 }
 
-func analyzeTypeScript(file *sourceFile) ([]report.Function, []report.Finding, error) {
-	tree, language, err := parseTypeScript(file.path, file.source)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	defer tree.Release()
-	root := tree.RootNode()
+func analyzeTypeScript(file *sourceFile, root *gotreesitter.Node, language *gotreesitter.Language) ([]report.Function, []report.Finding) {
 	functions := make([]*typescriptFunction, 0)
 	var collect func(*gotreesitter.Node, *typescriptFunction)
 	collect = func(node *gotreesitter.Node, parent *typescriptFunction) {
@@ -69,18 +68,23 @@ func analyzeTypeScript(file *sourceFile) ([]report.Function, []report.Finding, e
 				name = "anon-" + strings.TrimPrefix(fingerprint, "sha256:")
 			}
 
-			if parent != nil {
-				name = parent.metric.Name + "." + name
-			} else {
-				for owner := node.Parent(); owner != nil; owner = owner.Parent() {
-					if owner.Type(language) == "class_declaration" || owner.Type(language) == "class" {
-						if identifier := owner.ChildByFieldName("name", language); identifier != nil {
-							name = identifier.Text(file.source) + "." + name
-						}
+			// Include classes between this function and its enclosing function.
+			// Stopping there avoids repeating a method's class on nested arrows.
+			for owner := node.Parent(); owner != nil; owner = owner.Parent() {
+				if parent != nil && owner == parent.node {
+					break
+				}
 
-						break
+				switch owner.Type(language) {
+				case "class_declaration", "abstract_class_declaration", "class":
+					if identifier := owner.ChildByFieldName("name", language); identifier != nil {
+						name = identifier.Text(file.source) + "." + name
 					}
 				}
+			}
+
+			if parent != nil {
+				name = parent.metric.Name + "." + name
 			}
 
 			start, end := typescriptPosition(node, file.source)
@@ -123,11 +127,15 @@ func analyzeTypeScript(file *sourceFile) ([]report.Function, []report.Finding, e
 			case "if_statement", "for_statement", "for_in_statement", "while_statement", "do_statement", "catch_clause", "ternary_expression":
 				function.metric.Cyclomatic++
 				depth++
-				if node.Type(language) == "if_statement" && depth > 1 {
+				if depth > 1 {
 					function.metric.StructuralSignals.NestedBranches++
 				}
 
 			case "switch_statement":
+				if depth > 0 {
+					function.metric.StructuralSignals.NestedBranches++
+				}
+
 				depth++
 			case "switch_case":
 				function.metric.Cyclomatic++
@@ -191,7 +199,7 @@ func analyzeTypeScript(file *sourceFile) ([]report.Function, []report.Finding, e
 		}
 	}
 
-	return metrics, findings, nil
+	return metrics, findings
 }
 
 func typescriptFunctionNode(node *gotreesitter.Node, language *gotreesitter.Language) bool {
@@ -255,14 +263,8 @@ func typescriptNodeTokens(node *gotreesitter.Node, language *gotreesitter.Langua
 	return normalized.String()
 }
 
-func typescriptLineMap(path string, source []byte) []bool {
+func typescriptLineMap(root *gotreesitter.Node, language *gotreesitter.Language, source []byte) []bool {
 	lines := make([]bool, physicalLineCount(source)+1)
-	tree, language, err := parseTypeScript(path, source)
-	if err != nil {
-		return lines
-	}
-
-	defer tree.Release()
 	var walk func(*gotreesitter.Node)
 	walk = func(node *gotreesitter.Node) {
 		if node.Type(language) == "comment" {
@@ -283,7 +285,7 @@ func typescriptLineMap(path string, source []byte) []bool {
 		}
 	}
 
-	walk(tree.RootNode())
+	walk(root)
 	return lines
 }
 

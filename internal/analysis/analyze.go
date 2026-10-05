@@ -44,18 +44,20 @@ func (e *AnalysisError) Error() string {
 }
 
 type sourceFile struct {
-	source    []byte
-	path      string
-	category  report.Category
-	status    report.FileStatus
-	reason    string
-	err       string
-	fileSet   *token.FileSet
-	astFile   *ast.File
-	lineCode  []bool
-	bytes     int64
-	lines     int
-	codeLines int
+	source      []byte
+	path        string
+	category    report.Category
+	status      report.FileStatus
+	reason      string
+	err         string
+	fileSet     *token.FileSet
+	astFile     *ast.File
+	lineCode    []bool
+	bytes       int64
+	lines       int
+	codeLines   int
+	tsFunctions []report.Function
+	tsTokens    []typescriptSourceToken
 }
 
 type analysisState struct {
@@ -225,6 +227,20 @@ func (s *analysisState) visit(ctx context.Context, path string, entry os.DirEntr
 
 	if file.status == report.FileAnalyzed {
 		s.parseFile(file)
+	} else if isTypeScriptPath(file.path) {
+		// Exclusion owns the status; valid syntax still contributes coverage
+		// counts, while invalid excluded syntax has unknown code-line counts.
+		tree, language, err := parseTypeScript(file.path, file.source)
+		if err == nil {
+			file.lineCode = typescriptLineMap(tree.RootNode(), language, file.source)
+			for _, code := range file.lineCode {
+				if code {
+					file.codeLines++
+				}
+			}
+
+			tree.Release()
+		}
 	}
 
 	s.recordFile(file)
@@ -273,7 +289,11 @@ func (s *analysisState) discoverFile(path, rel string, entry os.DirEntry) *sourc
 		return nil
 	}
 
-	lineCode := sourceLineMap(rel, source)
+	var lineCode []bool
+	if !isTypeScriptPath(rel) {
+		lineCode = sourceLineMap(rel, source)
+	}
+
 	lines := physicalLineCount(source)
 	codeLines := 0
 	for _, code := range lineCode {
@@ -317,7 +337,7 @@ func (s *analysisState) discoverFile(path, rel string, entry os.DirEntry) *sourc
 
 func (s *analysisState) parseFile(file *sourceFile) {
 	if isTypeScriptPath(file.path) {
-		functions, findings, err := analyzeTypeScript(file)
+		tree, language, err := parseTypeScript(file.path, file.source)
 		if err != nil {
 			file.status = report.FileParseError
 			file.err = cleanError(err)
@@ -325,6 +345,18 @@ func (s *analysisState) parseFile(file *sourceFile) {
 			return
 		}
 
+		defer tree.Release()
+		root := tree.RootNode()
+		file.lineCode = typescriptLineMap(root, language, file.source)
+		for _, code := range file.lineCode {
+			if code {
+				file.codeLines++
+			}
+		}
+
+		functions, findings := analyzeTypeScript(file, root, language)
+		file.tsFunctions = functions
+		file.tsTokens = typescriptTokens(root, language, file.source)
 		s.functions = append(s.functions, functions...)
 		s.findings = append(s.findings, findings...)
 		return

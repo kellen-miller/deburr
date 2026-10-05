@@ -130,8 +130,8 @@ func writeGitHubCoverage(out *strings.Builder, value *report.Report) {
 	}
 	if value.Duplication != nil && value.Duplication.Status == report.DuplicationMeasured {
 		for _, measured := range value.Duplication.Percentages {
-			fmt.Fprintf(out, "::notice title=deburr duplication::%s: %.2f%% duplication across %d files; threshold=%s%%\n",
-				measured.Category, measured.Percentage, measured.Files, escapeCommandValue(value.Duplication.Config.Threshold))
+			fmt.Fprintf(out, "::notice title=deburr duplication::%s: %.2f%% duplication across %d files (%d selected); threshold=%s%%\n",
+				measured.Category, measured.Percentage, measured.Files, measured.SelectedFiles, escapeCommandValue(value.Duplication.Config.Threshold))
 		}
 
 		if value.Duplication.ThresholdExceeded && value.Duplication.Config.EnforceThreshold {

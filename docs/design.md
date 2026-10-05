@@ -189,7 +189,11 @@ partial scan cannot appear clean by omission.
 
 The parser reads syntax only, including TSX and declaration files; it does not
 load `tsconfig.json`, resolve imports, or type-check. Error or missing syntax
-nodes and parser timeouts are parse failures, never partial function metrics.
+nodes and exhausted source-derived work budgets are parse failures, never
+partial function metrics. Eligible sources parse once; line maps, functions,
+and clone tokens reuse that parse. No wall-clock parser deadline affects
+measurement. Excluded valid TypeScript retains code-line coverage; invalid
+excluded syntax remains excluded with unknown code-line count recorded as zero.
 Functions with bodies, methods, generators, and arrow functions are measured.
 Overload and ambient signatures have no function metrics. Named expressions
 use their binding name; anonymous expressions use a syntax digest. Class and
@@ -219,8 +223,11 @@ identity, preserving literal content and stable identities after line moves.
 
 Consumers compare `SchemaVersion`, analyzer ID/version, canonical config,
 language, and scope before comparing findings or measurements. A changed rule,
-threshold, exclusion, generated-file policy, or source-selection semantics is
-incompatible. Added and deleted source files are normal comparison inputs and
+native finding threshold, exclusion, generated-file policy, or source-selection
+semantics is incompatible. Duplication threshold and enforcement policies are
+excluded from measurement identity because they run after evidence collection;
+comparison output retains their original values. Added and deleted source files
+are normal comparison inputs and
 do not make otherwise compatible reports invalid. Missing files and
 parse/read failures are reported as coverage changes; they must not be
 interpreted as resolved findings. Finding IDs use the source-relative path,
@@ -234,7 +241,8 @@ the source evidence attached.
 Duplication discovers `.jscpd.json` in the target directory or its ancestors,
 stopping at the nearest repository root. An explicit `--duplicates-config`
 path overrides discovery. Config-relative `path`, `ignore`, `pattern`,
-`format`, and hierarchical `.gitignore` rules filter original paths before
+`format` filter original paths; hierarchical `.gitignore` rules begin at the
+repository root independently of the config location. Filtering occurs before
 snapshotting; they intersect the native production/test selection and never
 widen it. Native metrics and coverage keep the full audited scope.
 
@@ -247,9 +255,16 @@ applicable `.gitignore` digest are part of comparison identity. Absolute
 config paths and snapshot paths are not report identities.
 
 The detector always runs with threshold 100 so a quality threshold cannot
-prevent evidence collection. JSON must contain measured percentages. Deburr
-records percentages and selected file counts per category, then evaluates the
+prevent evidence collection. JSON must contain measured percentages and analyzed source counts. Deburr
+records percentages, selected file counts, and actual detector source counts
+per category, then evaluates the
 configured threshold. Exceeding it remains advisory unless enforcement is
 requested. Enforcement returns a nonzero CLI status while preserving measured
 clones, percentages, and a threshold-exceeded flag. Detector command failures
 remain incomplete measurements.
+
+Empty eligible scope or a nonempty category with zero detector sources is an
+error, preventing a vacuous threshold pass. `skipLocal: true` is rejected:
+isolated category snapshots do not retain the detector's configured path
+groups. Major 5 has no default maximum line count; configured `maxLines` may
+filter sources, which is reflected in actual analyzed counts.

@@ -210,6 +210,13 @@ type DuplicationConfig struct {
 	Requested        bool            `json:"requested"`
 }
 
+// MeasurementIdentity excludes policies applied after detector measurement.
+func (config DuplicationConfig) MeasurementIdentity() DuplicationConfig {
+	config.Threshold = ""
+	config.EnforceThreshold = false
+	return config
+}
+
 type DuplicationStatus string
 
 const (
@@ -219,9 +226,10 @@ const (
 )
 
 type DuplicationPercentage struct {
-	Files      int      `json:"files"`
-	Category   Category `json:"category"`
-	Percentage float64  `json:"percentage"`
+	Files         int      `json:"files"`
+	SelectedFiles int      `json:"selected_files"`
+	Category      Category `json:"category"`
+	Percentage    float64  `json:"percentage"`
 }
 
 type Duplication struct {

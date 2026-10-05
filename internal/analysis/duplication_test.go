@@ -19,7 +19,7 @@ func TestMain(m *testing.M) {
 
 		for index, arg := range os.Args {
 			if arg == "--output" && index+1 < len(os.Args) {
-				err := os.WriteFile(filepath.Join(os.Args[index+1], "report.json"), []byte(`{"duplicates":[],"statistics":{"total":{"percentage":0}}}`), 0o600)
+				err := os.WriteFile(filepath.Join(os.Args[index+1], "report.json"), []byte(`{"duplicates":[],"statistics":{"total":{"percentage":0,"sources":1}}}`), 0o600)
 				if err != nil {
 					os.Exit(2)
 				}

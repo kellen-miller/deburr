@@ -106,7 +106,7 @@ jobs:
           fi
 
           mkdir -p "$output"
-          printf '{"duplicates":[],"statistics":{"total":{"percentage":0}}}\n' > "$output/report.json"
+          printf '{"duplicates":[],"statistics":{"total":{"percentage":0,"sources":1}}}\n' > "$output/report.json"
           EOF
           chmod +x "$cpd_dir/cpd"
 

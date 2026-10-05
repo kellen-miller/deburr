@@ -80,18 +80,26 @@ Supported scope settings are `path`, `ignore`, `pattern`, `gitignore`, and
 `format` (intersected with Go/TypeScript/TSX). Detection settings include
 `minTokens`, `minLines`, `maxLines`, `maxSize`, `mode`, `threshold`,
 `ignoreCase`, `ignoreIdentifiers`, `ignoreLiterals`, `ignoreAnnotations`,
-`ignorePattern`, and `skipLocal`. Deburr owns `reporters`, `output`, `workers`,
+`ignorePattern`. `skipLocal: true` is rejected because category snapshots
+cannot preserve detector path groups. Deburr owns `reporters`, `output`, `workers`,
 `exitCode`, and presentation settings. Other settings are rejected explicitly.
 Config and ignore files are limited to 1 MiB; snapshot sources retain the
-16 MiB adapter limit.
+16 MiB adapter limit. Config scopes that select no eligible sources fail
+explicitly. Configs in `.github/` can omit `path` to use the audited sources,
+or use config-relative paths such as `../src`. Git ignore inheritance starts
+at the repository root even when the detector config lives below it.
 
 A configured threshold is advisory by default. Add
 `--enforce-duplicates-threshold` to fail if either production or test
 percentage exceeds it; the report keeps status `measured`, clone evidence,
 percentages, and `threshold_exceeded`. Native source categories still apply,
 so these percentages can differ from a standalone all-language detector run.
+Reports distinguish selected files from files actually analyzed by the detector.
+A nonempty category with zero detector sources fails explicitly.
 Reports retain effective settings and a digest of applicable `.gitignore`
-files so configuration changes invalidate comparisons.
+files so measurement changes invalidate comparisons. Duplication threshold
+and enforcement changes preserve comparison compatibility; both policies
+remain recorded in reports.
 
 ```sh
 deburr audit . --duplicates --duplicates-config .jscpd.json --format json
