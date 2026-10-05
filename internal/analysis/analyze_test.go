@@ -531,8 +531,8 @@ func TestAnalyzeDuplicationAdapterReportsNormalizedClones(t *testing.T) {
 	}
 
 	versionOutput, err := exec.Command(tool, "--version").CombinedOutput()
-	if err != nil || !strings.Contains(string(versionOutput), duplicationToolVersion) {
-		t.Skipf("supported cpd %s unavailable: %s", duplicationToolVersion, versionOutput)
+	if err != nil || !strings.HasPrefix(semanticVersionPattern.FindString(string(versionOutput)), duplicationToolMajor+".") {
+		t.Skipf("supported cpd %s unavailable: %s", duplicationToolMajor, versionOutput)
 	}
 
 	root := t.TempDir()
@@ -635,7 +635,7 @@ func Two() int {
 }
 `)
 
-	left, err := normalizeCPDClones([]cpdDuplicate{
+	left, err := normalizeTestCPDClones(t, []cpdDuplicate{
 		{
 			FirstFile: cpdFile{
 				Name: "one.go", StartLoc: cpdPoint{Line: 4, Column: 2}, EndLoc: cpdPoint{Line: 4, Column: 9},
@@ -654,7 +654,7 @@ func Two() int {
 		t.Fatalf("normalize left clones: %v", err)
 	}
 
-	right, err := normalizeCPDClones([]cpdDuplicate{
+	right, err := normalizeTestCPDClones(t, []cpdDuplicate{
 		{
 			FirstFile: cpdFile{
 				Name: "one.go", StartLoc: cpdPoint{Line: 7, Column: 2}, EndLoc: cpdPoint{Line: 7, Column: 9},
@@ -718,7 +718,7 @@ func Two() int {
 		},
 	}
 
-	clones, err := normalizeCPDClones(
+	clones, err := normalizeTestCPDClones(t,
 		duplicates,
 		report.CategoryProduction,
 		"/tmp/snapshot",
@@ -740,7 +740,7 @@ func Two() int {
 		t.Fatalf("repeated clone occurrences not marked ambiguous: %+v", clones)
 	}
 
-	changed, err := normalizeCPDClones([]cpdDuplicate{
+	changed, err := normalizeTestCPDClones(t, []cpdDuplicate{
 		{
 			FirstFile: cpdFile{
 				Name: "one.go", StartLoc: cpdPoint{Line: 4, Column: 2}, EndLoc: cpdPoint{Line: 4, Column: 9},
@@ -826,7 +826,7 @@ return 2
 		},
 	}
 
-	clones, err := normalizeCPDClones(
+	clones, err := normalizeTestCPDClones(t,
 		duplicates,
 		report.CategoryProduction,
 		"/tmp/snapshot",
@@ -854,18 +854,15 @@ return 2
 }
 
 func TestAnalyzeDuplicationVersionMismatchIsIncomplete(t *testing.T) {
-	if _, err := exec.LookPath("cpd"); err != nil {
-		t.Skipf("cpd unavailable: %v", err)
-	}
 
 	root := t.TempDir()
 	writeTestFile(t, root, "sample.go", "package sample\nfunc Main() {}\n")
 	cfg := DefaultConfig()
 	cfg.Duplication.Requested = true
-	cfg.Duplication.Version = "0.0.0"
+	cfg.Duplication.Tool = writeVersionTool(t, "4.0.0")
 	result, err := Analyze(t.Context(), root, cfg)
 	if err == nil {
-		t.Fatal("Analyze() error = nil, want pinned version failure")
+		t.Fatal("Analyze() error = nil, want unsupported major failure")
 	}
 
 	if result.Duplication == nil || result.Duplication.Status != report.DuplicationError ||

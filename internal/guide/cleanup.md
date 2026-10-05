@@ -1,7 +1,7 @@
 # Deburr cleanup guide
 
 Use this guide with any harness that can run the `deburr` binary. Deburr is a
-deterministic Go analyzer. It reports evidence for review; it does not use a
+deterministic Go and TypeScript analyzer. It reports evidence for review; it does not use a
 model, rewrite files, or decide that a repository is good or bad.
 
 ## Before changing code
@@ -120,7 +120,7 @@ does not support the proposed change. Do not chase zero findings.
 
 ## Report and CI boundaries
 
-The pre-1.0 CLI supports Go analysis only. A report must make unsupported or
+The pre-1.0 CLI supports Go and TypeScript analysis. A report must make unsupported or
 unparsed input visible. Report formats are `text`, `json`,
 `html`, and `github`:
 
@@ -133,16 +133,16 @@ Use `github` when a caller wants GitHub Actions annotations or a file suitable
 for an artifact. The GitHub Action invokes this same CLI and exposes its report
 path. It does not add an independent analyzer or mandatory quality threshold.
 
-Duplication analysis is opt-in. The supported adapter uses pinned CPD 5.3.0,
-an 80-token and 8-line minimum, and an advisory 100% threshold. When it is
+Duplication analysis is opt-in. The supported adapter uses CPD or jscpd major 5 (any minor/patch release),
+an 80-token and 8-line minimum, and an advisory 100% threshold when no config overrides it. When it is
 enabled, keep its status, engine, version, and settings in the report so a
 later comparison cannot confuse a detector change with a code change. A
 nonzero tool exit makes the run incomplete; the threshold does not act as a
 quality gate. The default status is not requested.
 
 The GitHub Action keeps the same opt-in boundary. Set `duplicates: true` and,
-when CPD is not on `PATH`, pass `cpd` with the path to a caller-provisioned
-CPD 5.3.0 executable. The action does not install a second detector or infer
+when CPD is not on `PATH`, pass `cpd` or `jscpd` with the path to a caller-provisioned
+CPD/jscpd major 5 executable. The action does not install a second detector or infer
 that duplication should run from the presence of a path.
 
 Report positions, including duplication locations, use one-based lines and
@@ -151,3 +151,10 @@ columns with inclusive end positions.
 The CLI has no composite score. Read the findings, measurements, and coverage
 that the report defines, then use engineering judgment and repository checks
 to decide what to keep.
+
+Duplication loads the nearest `.jscpd.json`, or an explicit
+`--duplicates-config FILE`. Its paths, exclusions, and `.gitignore` rules
+narrow duplication scope while native coverage stays visible. Effective
+settings and ignore-file digests are recorded for comparison. Thresholds stay
+advisory unless `--enforce-duplicates-threshold` (or the matching Action input)
+is enabled; enforcement preserves the measured clone evidence and percentages.

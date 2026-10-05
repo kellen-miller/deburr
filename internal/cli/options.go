@@ -11,13 +11,15 @@ import (
 )
 
 const (
-	helpFlagLong     = "--help"
-	helpFlagShort    = "-h"
-	formatFlag       = "--format"
-	outputFlag       = "--output"
-	ledgerFlag       = "--ledger"
-	cpdFlag          = "--cpd"
-	maxFileBytesFlag = "--max-file-bytes"
+	helpFlagLong          = "--help"
+	helpFlagShort         = "-h"
+	formatFlag            = "--format"
+	outputFlag            = "--output"
+	ledgerFlag            = "--ledger"
+	cpdFlag               = "--cpd"
+	jscpdFlag             = "--jscpd"
+	duplicationConfigFlag = "--duplicates-config"
+	maxFileBytesFlag      = "--max-file-bytes"
 )
 
 type commandOptions struct {
@@ -43,10 +45,12 @@ type scannedArguments struct {
 func parseOptions(args []string, audit bool) (commandOptions, []string, error) {
 	options := commandOptions{format: render.FormatText, config: analysis.DefaultConfig()}
 	scanned, err := scanArguments(args, map[string]bool{
-		formatFlag:       true,
-		outputFlag:       true,
-		maxFileBytesFlag: true,
-		cpdFlag:          true,
+		formatFlag:            true,
+		outputFlag:            true,
+		maxFileBytesFlag:      true,
+		cpdFlag:               true,
+		jscpdFlag:             true,
+		duplicationConfigFlag: true,
 	}, false)
 	if err != nil {
 		return options, nil, err
@@ -132,8 +136,8 @@ func applyOption(options *commandOptions, option cliOption, audit bool) error {
 		"--include-vendor",
 		"--include-generated",
 		maxFileBytesFlag,
-		"--duplicates",
-		cpdFlag:
+		"--duplicates", "--enforce-duplicates-threshold",
+		duplicationConfigFlag, cpdFlag, jscpdFlag:
 		if !audit {
 			return fmt.Errorf("%s is only valid for audit", option.name)
 		}
@@ -145,6 +149,16 @@ func applyOption(options *commandOptions, option cliOption, audit bool) error {
 }
 
 func applyAuditOption(options *commandOptions, option cliOption) error {
+	if option.name == duplicationConfigFlag {
+		if option.value == "" {
+			return errors.New("--duplicates-config requires a config path")
+		}
+
+		options.config.Duplication.ConfigPath = option.value
+		options.config.Duplication.Requested = true
+		return nil
+	}
+
 	if option.name == maxFileBytesFlag {
 		maxBytes, err := strconv.ParseInt(option.value, 10, 64)
 		if err != nil || maxBytes <= 0 {
@@ -155,9 +169,13 @@ func applyAuditOption(options *commandOptions, option cliOption) error {
 		return nil
 	}
 
-	if option.name == cpdFlag {
+	if option.name == cpdFlag || option.name == jscpdFlag {
 		if option.value == "" {
-			return fmt.Errorf("%s requires an executable path", cpdFlag)
+			return fmt.Errorf("%s requires an executable path", option.name)
+		}
+
+		if options.config.Duplication.Tool != "" {
+			return errors.New("select only one duplication executable")
 		}
 
 		options.config.Duplication.Requested = true
@@ -178,6 +196,9 @@ func applyAuditOption(options *commandOptions, option cliOption) error {
 		options.config.IncludeVendor = true
 	case "--include-generated":
 		options.config.IncludeGenerated = true
+	case "--enforce-duplicates-threshold":
+		options.config.Duplication.Requested = true
+		options.config.Duplication.EnforceThreshold = true
 	case "--duplicates":
 		options.config.Duplication.Requested = true
 	default:

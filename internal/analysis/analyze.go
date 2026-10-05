@@ -44,18 +44,20 @@ func (e *AnalysisError) Error() string {
 }
 
 type sourceFile struct {
-	source    []byte
-	path      string
-	category  report.Category
-	status    report.FileStatus
-	reason    string
-	err       string
-	fileSet   *token.FileSet
-	astFile   *ast.File
-	lineCode  []bool
-	bytes     int64
-	lines     int
-	codeLines int
+	source      []byte
+	path        string
+	category    report.Category
+	status      report.FileStatus
+	reason      string
+	err         string
+	fileSet     *token.FileSet
+	astFile     *ast.File
+	lineCode    []bool
+	bytes       int64
+	lines       int
+	codeLines   int
+	tsFunctions []report.Function
+	tsTokens    []typescriptSourceToken
 }
 
 type analysisState struct {
@@ -71,8 +73,8 @@ type analysisState struct {
 	report    report.Report
 }
 
-// Analyze scans root with the native Go analyzer. The target source is read
-// and parsed only; no target code or build hooks are executed.
+// Analyze reads and parses Go and TypeScript source under root.
+// No target code or build hooks are executed.
 func Analyze(ctx context.Context, root string, cfg Config) (report.Report, error) {
 	cfg = cfg.normalized()
 	result := report.Report{
@@ -144,7 +146,7 @@ func duplicationResult(cfg Config) *report.Duplication {
 	return &report.Duplication{
 		Status: report.DuplicationError,
 		Config: config,
-		Error:  "duplication adapter is not enabled in the native Go analyzer",
+		Error:  "duplication adapter is not enabled in the native Go and TypeScript analyzer",
 	}
 }
 
@@ -225,6 +227,20 @@ func (s *analysisState) visit(ctx context.Context, path string, entry os.DirEntr
 
 	if file.status == report.FileAnalyzed {
 		s.parseFile(file)
+	} else if isTypeScriptPath(file.path) {
+		// Exclusion owns the status; valid syntax still contributes coverage
+		// counts, while invalid excluded syntax has unknown code-line counts.
+		tree, language, err := parseTypeScript(file.path, file.source)
+		if err == nil {
+			file.lineCode = typescriptLineMap(tree.RootNode(), language, file.source)
+			for _, code := range file.lineCode {
+				if code {
+					file.codeLines++
+				}
+			}
+
+			tree.Release()
+		}
 	}
 
 	s.recordFile(file)
@@ -245,7 +261,7 @@ func (s *analysisState) discoverFile(path, rel string, entry os.DirEntry) *sourc
 		return nil
 	}
 
-	if !strings.HasSuffix(info.Name(), ".go") {
+	if !supportedSourcePath(info.Name()) {
 		s.recordFile(&sourceFile{
 			path:     rel,
 			category: categoryForPath(rel),
@@ -273,9 +289,21 @@ func (s *analysisState) discoverFile(path, rel string, entry os.DirEntry) *sourc
 		return nil
 	}
 
-	lines, codeLines := sourceLineCounts(rel, source)
+	var lineCode []bool
+	if !isTypeScriptPath(rel) {
+		lineCode = sourceLineMap(rel, source)
+	}
+
+	lines := physicalLineCount(source)
+	codeLines := 0
+	for _, code := range lineCode {
+		if code {
+			codeLines++
+		}
+	}
+
 	category := categoryForPath(rel)
-	if category != report.CategoryVendor && isGenerated(source) {
+	if category != report.CategoryVendor && isGenerated(rel, source) {
 		category = report.CategoryGenerated
 	}
 
@@ -287,7 +315,7 @@ func (s *analysisState) discoverFile(path, rel string, entry os.DirEntry) *sourc
 		lines:     lines,
 		codeLines: codeLines,
 		source:    source,
-		lineCode:  sourceLineMap(rel, source),
+		lineCode:  lineCode,
 	}
 
 	if category == report.CategoryVendor && !s.cfg.IncludeVendor {
@@ -308,6 +336,32 @@ func (s *analysisState) discoverFile(path, rel string, entry os.DirEntry) *sourc
 }
 
 func (s *analysisState) parseFile(file *sourceFile) {
+	if isTypeScriptPath(file.path) {
+		tree, language, err := parseTypeScript(file.path, file.source)
+		if err != nil {
+			file.status = report.FileParseError
+			file.err = cleanError(err)
+			s.failures = append(s.failures, FileFailure{Path: file.path, Status: file.status, Message: file.err})
+			return
+		}
+
+		defer tree.Release()
+		root := tree.RootNode()
+		file.lineCode = typescriptLineMap(root, language, file.source)
+		for _, code := range file.lineCode {
+			if code {
+				file.codeLines++
+			}
+		}
+
+		functions, findings := analyzeTypeScript(file, root, language)
+		file.tsFunctions = functions
+		file.tsTokens = typescriptTokens(root, language, file.source)
+		s.functions = append(s.functions, functions...)
+		s.findings = append(s.findings, findings...)
+		return
+	}
+
 	fset := token.NewFileSet()
 	parsed, parseErr := parser.ParseFile(fset, file.path, file.source, parser.ParseComments|parser.AllErrors)
 	if parseErr != nil {
@@ -330,7 +384,7 @@ func (s *analysisState) parseFile(file *sourceFile) {
 
 func (s *analysisState) recordFailure(path string, message string) {
 	category := report.CategoryUnsupported
-	if strings.HasSuffix(path, ".go") {
+	if supportedSourcePath(path) {
 		category = categoryForPath(path)
 	}
 

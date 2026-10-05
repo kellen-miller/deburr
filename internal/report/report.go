@@ -1,6 +1,8 @@
 // Package report defines the stable, renderer-neutral deburr report schema.
 package report
 
+import "encoding/json"
+
 const SchemaVersion = "2"
 
 type Report struct {
@@ -188,13 +190,31 @@ type Detail struct {
 }
 
 type DuplicationConfig struct {
-	Tool      string `json:"tool,omitempty"`
-	Version   string `json:"version,omitempty"`
-	Scope     string `json:"scope,omitempty"`
-	Threshold string `json:"threshold,omitempty"`
-	MinTokens int    `json:"min_tokens,omitempty"`
-	MinLines  int    `json:"min_lines,omitempty"`
-	Requested bool   `json:"requested"`
+	Formats          []string        `json:"formats,omitempty"`
+	MaxFileBytes     int64           `json:"max_file_bytes,omitempty"`
+	ScopeRoot        string          `json:"scope_root,omitempty"`
+	Paths            []string        `json:"paths,omitempty"`
+	Ignore           []string        `json:"ignore,omitempty"`
+	Pattern          string          `json:"pattern,omitempty"`
+	Mode             string          `json:"mode,omitempty"`
+	Gitignore        bool            `json:"gitignore"`
+	GitignoreDigest  string          `json:"gitignore_digest,omitempty"`
+	DetectorSettings json.RawMessage `json:"detector_settings,omitempty"`
+	EnforceThreshold bool            `json:"enforce_threshold"`
+	Tool             string          `json:"tool,omitempty"`
+	Version          string          `json:"version,omitempty"`
+	Scope            string          `json:"scope,omitempty"`
+	Threshold        string          `json:"threshold,omitempty"`
+	MinTokens        int             `json:"min_tokens,omitempty"`
+	MinLines         int             `json:"min_lines,omitempty"`
+	Requested        bool            `json:"requested"`
+}
+
+// MeasurementIdentity excludes policies applied after detector measurement.
+func (config DuplicationConfig) MeasurementIdentity() DuplicationConfig {
+	config.Threshold = ""
+	config.EnforceThreshold = false
+	return config
 }
 
 type DuplicationStatus string
@@ -205,11 +225,20 @@ const (
 	DuplicationError        DuplicationStatus = "error"
 )
 
+type DuplicationPercentage struct {
+	Files         int      `json:"files"`
+	SelectedFiles int      `json:"selected_files"`
+	Category      Category `json:"category"`
+	Percentage    float64  `json:"percentage"`
+}
+
 type Duplication struct {
-	Status DuplicationStatus `json:"status"`
-	Error  string            `json:"error,omitempty"`
-	Clones []Clone           `json:"clones,omitempty"`
-	Config DuplicationConfig `json:"config"`
+	Percentages       []DuplicationPercentage `json:"percentages,omitempty"`
+	ThresholdExceeded bool                    `json:"threshold_exceeded"`
+	Status            DuplicationStatus       `json:"status"`
+	Error             string                  `json:"error,omitempty"`
+	Clones            []Clone                 `json:"clones,omitempty"`
+	Config            DuplicationConfig       `json:"config"`
 }
 
 type Clone struct {

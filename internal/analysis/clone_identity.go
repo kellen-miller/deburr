@@ -5,7 +5,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"go/ast"
-	"go/parser"
 	"go/token"
 	"sort"
 	"strconv"
@@ -21,10 +20,12 @@ const cloneFileScope = "file"
 const cloneAmbiguousMinimum = 2
 
 type cloneSourceScope struct {
-	source    []byte
-	fileSet   *token.FileSet
-	astFile   *ast.File
-	functions []*functionNode
+	source      []byte
+	fileSet     *token.FileSet
+	astFile     *ast.File
+	functions   []*functionNode
+	tsFunctions []report.Function
+	tsTokens    []typescriptSourceToken
 }
 
 type normalizedCloneEndpoint struct {
@@ -51,28 +52,20 @@ type normalizedClonePair struct {
 	ambiguous   bool
 }
 
-func buildCloneSourceScopes(selected map[string][]byte) map[string]cloneSourceScope {
-	scopes := make(map[string]cloneSourceScope, len(selected))
-	for path, source := range selected {
-		fileSet := token.NewFileSet()
-		parsed, err := parser.ParseFile(fileSet, path, source, parser.ParseComments)
-		if err != nil || parsed == nil {
-			scopes[path] = cloneSourceScope{source: source, fileSet: fileSet}
+func buildCloneSourceScopes(files []*sourceFile) map[string]cloneSourceScope {
+	scopes := make(map[string]cloneSourceScope, len(files))
+	for _, file := range files {
+		if isTypeScriptPath(file.path) {
+			scopes[file.path] = cloneSourceScope{source: file.source, tsFunctions: file.tsFunctions, tsTokens: file.tsTokens}
 			continue
 		}
 
-		file := &sourceFile{
-			path:    path,
-			source:  source,
-			fileSet: fileSet,
-			astFile: parsed,
-		}
 		nodes := collectFunctions(file)
 		assignFunctionNames(nodes)
-		scopes[path] = cloneSourceScope{
-			source:    source,
-			fileSet:   fileSet,
-			astFile:   parsed,
+		scopes[file.path] = cloneSourceScope{
+			source:    file.source,
+			fileSet:   file.fileSet,
+			astFile:   file.astFile,
 			functions: nodes,
 		}
 	}
@@ -89,7 +82,21 @@ func normalizeCloneEndpoint(location report.Location, scope cloneSourceScope) (n
 		)
 	}
 
-	tokens := normalizedSourceTokenRegion(scope.source, location)
+	tokens := ""
+	if isTypeScriptPath(location.Path) {
+		var normalized strings.Builder
+		for _, token := range scope.tsTokens {
+			if int(token.end) > start && int(token.start) < end {
+				normalized.WriteString(strconv.Quote(token.text))
+				normalized.WriteByte(';')
+			}
+		}
+
+		tokens = normalized.String()
+	} else {
+		tokens = normalizedSourceTokenRegion(scope.source, location)
+	}
+
 	if tokens == "" || end <= start {
 		return normalizedCloneEndpoint{}, fmt.Errorf(
 			"duplication report returned empty source region %q",
@@ -167,6 +174,29 @@ func sourcePositionOffset(source []byte, position report.Position, inclusiveEnd 
 }
 
 func cloneFunctionScope(scope cloneSourceScope, location report.Location) (string, bool) {
+	if isTypeScriptPath(location.Path) {
+		start, end, ok := sourceRegionOffsets(scope.source, location)
+		if !ok {
+			return cloneFileScope, false
+		}
+
+		var owner *report.Function
+		ownerSize := len(scope.source) + 1
+		for index := range scope.tsFunctions {
+			function := &scope.tsFunctions[index]
+			left, right, valid := sourceRegionOffsets(scope.source, report.Location{Start: function.Start, End: function.End})
+			if valid && left <= start && right >= end && right-left < ownerSize {
+				owner, ownerSize = function, right-left
+			}
+		}
+
+		if owner != nil {
+			return owner.ID, owner.IdentityAmbiguous
+		}
+
+		return cloneFileScope, false
+	}
+
 	if scope.astFile == nil || len(scope.functions) == 0 {
 		if scope.astFile != nil && scope.astFile.Name != nil {
 			return scope.astFile.Name.Name + ".file", false

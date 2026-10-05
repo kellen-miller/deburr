@@ -1,13 +1,13 @@
-# Go analyzer and report contract
+# Native analyzer and report contract
 
-This document defines the first native analyzer contract. The Go analyzer is
+This document defines the native analyzer contract. The Go and TypeScript analyzer is
 deterministic and reads source files without executing target code. Renderers
-and the CLI consume `internal/report` values; they do not need to know how Go
+and the CLI consume `internal/report` values; they do not need to know how source
 syntax is traversed.
 
 ## API ownership
 
-`internal/analysis` owns filesystem discovery, Go parsing, source metrics, and
+`internal/analysis` owns filesystem discovery, Go and TypeScript parsing, source metrics, and
 verbosity findings. Its public entry point is:
 
 ```go
@@ -31,9 +31,11 @@ configuration is copied into `report.ConfigSummary`, so reports can be
 compared safely. Version and rule changes change `Analyzer.Version` or the
 configuration identity; a comparison must reject incompatible reports.
 
-The initial native engine has no third-party dependency and does not invoke a
-model, `go list`, `go test`, or target binaries. Duplication is an explicit,
-separate request. The supported adapter is pinned to CPD 5.3.0 with an
+The native engine uses Go standard-library parsing and bundled pure-Go
+tree-sitter TypeScript/TSX grammars. No language runtime or compiler is needed
+for a built CLI. It does not invoke a model, `go list`, `go test`, `tsc`, or
+target binaries. Duplication is an explicit,
+separate request. The supported adapter is compatible with CPD/jscpd major 5, without an exact version pin with an
 80-token minimum, an 8-line minimum, and a fixed advisory 100% threshold. If
 requested, the report records the selected executable, version, arguments,
 source scope (`production,test`), and result status. The threshold does not
@@ -115,7 +117,9 @@ type File struct {
 metrics by default. A path component named `vendor` is `vendor` and excluded.
 Generated code is excluded only when the source begins with the Go convention
 `^// Code generated .* DO NOT EDIT\.$` before its first non-comment,
-non-blank line. A non-Go regular file is `unsupported`. Symlinks and excluded
+non-blank line. TypeScript uses the same generated header convention. TypeScript `.test.*`,
+`.spec.*`, and `__tests__` paths are `test`. Other regular files outside
+`.go`, `.ts`, `.tsx`, `.mts`, and `.cts` are `unsupported`. Symlinks and excluded
 directories are counted in coverage but are never traversed or read.
 
 `Function` preserves raw measurements and source evidence:
@@ -175,18 +179,55 @@ machine-readable details. Rules may be expanded only with representative
 behavioral tests and calibration evidence.
 
 `Coverage` includes discovered, analyzed, excluded, unsupported, read-error,
-and parse-error counts, plus per-category counts. A scan with no analyzable Go
+and parse-error counts, plus per-category counts. A scan with no analyzable source
 files is successful only as a report-producing operation: its coverage states
 that zero files were analyzed. Any read or parse failure returns a non-nil
 error alongside the report and leaves a corresponding `File` entry. Thus a
 partial scan cannot appear clean by omission.
 
+## TypeScript measurement rules
+
+The parser reads syntax only, including TSX and declaration files; it does not
+load `tsconfig.json`, resolve imports, or type-check. Error or missing syntax
+nodes and exhausted source-derived work budgets are parse failures, never
+partial function metrics. Eligible sources parse once; line maps, functions,
+and clone tokens reuse that parse. No wall-clock parser deadline affects
+measurement. Excluded valid TypeScript retains code-line coverage; invalid
+excluded syntax remains excluded with unknown code-line count recorded as zero.
+Functions with bodies, methods, generators, and arrow functions are measured.
+Overload and ambient signatures have no function metrics. Named expressions
+use their binding name; anonymous expressions use a syntax digest. Class and
+nested function names retain their owner. Duplicate identities are marked
+ambiguous. Comments and syntax whitespace are ignored in fingerprints, while
+string, regex, and template contents are preserved.
+
+Cyclomatic complexity starts at 1 and counts `if`, loops, `catch`, ternaries,
+non-default switch cases, `&&`, `||`, and `??`. Nesting counts control constructs;
+nested functions are separate roots. Line ownership and mass follow the Go
+accounting rules. Duplicate branch findings compare syntax tokens. Redundant
+boolean findings require a comparison and opposite literal returns, either
+in an if/else or an if followed by a return. An explicit return type is not
+required because both paths return boolean literals. These remain review
+candidates. TypeScript currently records nested-branch structural signals;
+flat-guard, field-mapping, and assertion-call counters are Go-specific.
+
+Duplication runs on isolated production/test snapshots with Go, TypeScript,
+and TSX formats enabled. The caller provisions CPD or jscpd major 5; the
+adapter records the actual executable name and exact observed version in both
+configuration records. New minor/patch releases are accepted; other majors
+are rejected. Exact version differences still invalidate comparisons.
+TypeScript clone fingerprints use TypeScript tokens and the enclosing function
+identity, preserving literal content and stable identities after line moves.
+
 ## Comparison identity
 
 Consumers compare `SchemaVersion`, analyzer ID/version, canonical config,
 language, and scope before comparing findings or measurements. A changed rule,
-threshold, exclusion, generated-file policy, or source-selection semantics is
-incompatible. Added and deleted source files are normal comparison inputs and
+native finding threshold, exclusion, generated-file policy, or source-selection
+semantics is incompatible. Duplication threshold and enforcement policies are
+excluded from measurement identity because they run after evidence collection;
+comparison output retains their original values. Added and deleted source files
+are normal comparison inputs and
 do not make otherwise compatible reports invalid. Missing files and
 parse/read failures are reported as coverage changes; they must not be
 interpreted as resolved findings. Finding IDs use the source-relative path,
@@ -194,3 +235,36 @@ owning function identity, rule, normalized finding content, and occurrence.
 Line moves can therefore change IDs when the owning function or occurrence
 changes; compare consumers should show that as a new/resolved candidate with
 the source evidence attached.
+
+## Duplication configuration
+
+Duplication discovers `.jscpd.json` in the target directory or its ancestors,
+stopping at the nearest repository root. An explicit `--duplicates-config`
+path overrides discovery. Config-relative `path`, `ignore`, `pattern`,
+`format` filter original paths; hierarchical `.gitignore` rules begin at the
+repository root independently of the config location. Filtering occurs before
+snapshotting; they intersect the native production/test selection and never
+widen it. Native metrics and coverage keep the full audited scope.
+
+The adapter validates minimum tokens/lines, mode, numeric thresholds (0–100),
+relative glob syntax, formats, and maximum file size. It passes supported
+extra detection settings through a sanitized isolated config. Output and
+execution settings remain adapter-owned; unsupported fields fail explicitly.
+Effective settings, the config scope root relative to the audit root, and the
+applicable `.gitignore` digest are part of comparison identity. Absolute
+config paths and snapshot paths are not report identities.
+
+The detector always runs with threshold 100 so a quality threshold cannot
+prevent evidence collection. JSON must contain measured percentages and analyzed source counts. Deburr
+records percentages, selected file counts, and actual detector source counts
+per category, then evaluates the
+configured threshold. Exceeding it remains advisory unless enforcement is
+requested. Enforcement returns a nonzero CLI status while preserving measured
+clones, percentages, and a threshold-exceeded flag. Detector command failures
+remain incomplete measurements.
+
+Empty eligible scope or a nonempty category with zero detector sources is an
+error, preventing a vacuous threshold pass. `skipLocal: true` is rejected:
+isolated category snapshots do not retain the detector's configured path
+groups. Major 5 has no default maximum line count; configured `maxLines` may
+filter sources, which is reflected in actual analyzed counts.

@@ -1,5 +1,5 @@
 name: Deburr
-description: Run the Deburr Go analyzer and write a report for a path.
+description: Run the Deburr Go and TypeScript analyzer and write a report for a path.
 author: Kellen Miller
 
 inputs:
@@ -12,13 +12,27 @@ inputs:
     required: false
     default: github
   duplicates:
-    description: Run the opt-in CPD 5.3.0 duplication adapter.
+    description: Run the opt-in CPD/jscpd major 5 duplication adapter.
     required: false
     default: "false"
   cpd:
-    description: Optional path to a caller-provided CPD 5.3.0 executable.
+    description: Optional path to a caller-provided CPD/jscpd major 5 executable.
     required: false
     default: ""
+
+  jscpd:
+    description: Optional path to a caller-provided jscpd major 5 executable.
+    required: false
+    default: ""
+
+  duplicates-config:
+    description: Optional path to an explicit .jscpd.json configuration.
+    required: false
+    default: ""
+  enforce-duplicates-threshold:
+    description: Fail if production or test duplication exceeds the configured threshold.
+    required: false
+    default: "false"
 
 outputs:
   report:
@@ -51,6 +65,9 @@ runs:
         DEBURR_FORMAT: ${{ inputs.format }}
         DEBURR_DUPLICATES: ${{ inputs.duplicates }}
         DEBURR_CPD: ${{ inputs.cpd }}
+        DEBURR_JSCPD: ${{ inputs.jscpd }}
+        DEBURR_DUPLICATES_CONFIG: ${{ inputs.duplicates-config }}
+        DEBURR_ENFORCE_THRESHOLD: ${{ inputs.enforce-duplicates-threshold }}
       run: |
         set -euo pipefail
 
@@ -70,13 +87,37 @@ runs:
             ;;
         esac
 
+        case "$DEBURR_ENFORCE_THRESHOLD" in
+          true|false) ;;
+          *)
+            printf 'The Deburr enforce-duplicates-threshold input must be true or false.\n' >&2
+            exit 2
+            ;;
+        esac
+
+        if [[ ( -n "$DEBURR_DUPLICATES_CONFIG" || "$DEBURR_ENFORCE_THRESHOLD" == true ) && "$DEBURR_DUPLICATES" != true ]]; then
+          printf 'Duplication configuration and enforcement require duplicates: true.\n' >&2
+          exit 2
+        fi
+
+        if [[ "$DEBURR_DUPLICATES_CONFIG" == *$'\n'* || "$DEBURR_DUPLICATES_CONFIG" == *$'\r'* ]]; then
+          printf 'The Deburr duplicates-config path must not contain newlines.\n' >&2
+          exit 2
+        fi
+
+        if [[ -n "$DEBURR_CPD" && -n "$DEBURR_JSCPD" ]]; then
+          printf 'Select only one of cpd and jscpd.\n' >&2
+          exit 2
+        fi
+
+        DEBURR_CPD="${DEBURR_CPD:-$DEBURR_JSCPD}"
         if [[ -n "$DEBURR_CPD" && "$DEBURR_DUPLICATES" != true ]]; then
-          printf 'The Deburr cpd input requires duplicates: true.\n' >&2
+          printf 'The Deburr cpd/jscpd input requires duplicates: true.\n' >&2
           exit 2
         fi
 
         if [[ "$DEBURR_CPD" == *$'\n'* || "$DEBURR_CPD" == *$'\r'* ]]; then
-          printf 'The Deburr cpd path must not contain newlines.\n' >&2
+          printf 'The Deburr cpd/jscpd path must not contain newlines.\n' >&2
           exit 2
         fi
 
@@ -107,6 +148,18 @@ runs:
           else
             audit_args+=(--duplicates)
           fi
+        fi
+
+        if [[ -n "$DEBURR_DUPLICATES_CONFIG" ]]; then
+          config_path="$DEBURR_DUPLICATES_CONFIG"
+          if ! is_absolute_path "$config_path"; then
+            config_path="$GITHUB_WORKSPACE/$config_path"
+          fi
+          audit_args+=(--duplicates-config "$config_path")
+        fi
+
+        if [[ "$DEBURR_ENFORCE_THRESHOLD" == true ]]; then
+          audit_args+=(--enforce-duplicates-threshold)
         fi
 
         set +e

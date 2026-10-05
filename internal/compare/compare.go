@@ -255,7 +255,10 @@ func compatibilityReason(before, after *report.Report) string {
 		return reason
 	}
 
-	if !sameJSON(before.Config, after.Config) {
+	beforeConfig, afterConfig := before.Config, after.Config
+	beforeConfig.Duplication = beforeConfig.Duplication.MeasurementIdentity()
+	afterConfig.Duplication = afterConfig.Duplication.MeasurementIdentity()
+	if !sameJSON(beforeConfig, afterConfig) {
 		return "configuration differs"
 	}
 
@@ -392,7 +395,7 @@ func compareDuplication(before, after *report.Duplication) DuplicationComparison
 		return result
 	}
 
-	if !sameJSON(result.BeforeConfig, result.AfterConfig) {
+	if !sameJSON(result.BeforeConfig.MeasurementIdentity(), result.AfterConfig.MeasurementIdentity()) {
 		result.Comparable = false
 		result.Reason = "duplication configuration differs"
 	}

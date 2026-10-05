@@ -23,7 +23,7 @@ const usage = `Usage:
   deburr guide cleanup
   deburr --version
 
-Audit reads Go source without executing it. Findings are advisory; incomplete
+Audit reads Go and TypeScript source without executing it. Findings are advisory; incomplete
 analysis and input/output errors return a nonzero status. Reports are written
 to stdout unless --output is provided.
 `
@@ -33,13 +33,16 @@ const auditUsage = `Usage: deburr audit PATH [flags]
 Flags:
   --format FORMAT       text, json, html, or github (default text)
   --output FILE         write the report to FILE instead of stdout
-  --exclude-tests       exclude _test.go files from analysis
-  --include-testdata    analyze Go files under testdata
-  --include-vendor      analyze Go files under vendor
-  --include-generated   analyze generated Go files
+  --exclude-tests       exclude Go and TypeScript tests from analysis
+  --include-testdata    analyze source files under testdata
+  --include-vendor      analyze source files under vendor
+  --include-generated   analyze generated source files
   --max-file-bytes N    exclude source files larger than N bytes
-  --duplicates          run the opt-in pinned cpd 5.3.0 adapter
-  --cpd PATH            run a cpd executable (must report version 5.3.0)
+  --duplicates          run CPD/jscpd major 5 from PATH
+  --cpd PATH            run a CPD/jscpd executable (major 5)
+  --jscpd PATH          alias for --cpd PATH
+  --duplicates-config FILE  use an explicit .jscpd.json config
+  --enforce-duplicates-threshold  fail if either scope exceeds its threshold
   --help                show this help
 `
 
