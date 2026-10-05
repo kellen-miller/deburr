@@ -106,7 +106,7 @@ jobs:
           fi
 
           mkdir -p "$output"
-          printf '{"duplicates":[]}\n' > "$output/report.json"
+          printf '{"duplicates":[],"statistics":{"total":{"percentage":0}}}\n' > "$output/report.json"
           EOF
           chmod +x "$cpd_dir/cpd"
 
@@ -208,3 +208,66 @@ jobs:
         run: |
           test -s "$REPORT"
           grep -q '"status": "measured"' "$REPORT"
+
+      - name: Provision configured duplication fixture
+        shell: bash
+        run: |
+          set -euo pipefail
+          fixture="$RUNNER_TEMP/deburr config"
+          mkdir -p "$fixture/src"
+          cat > "$fixture/src/one.ts" <<'SOURCE'
+          export function value(n: number) {
+            if (n > 1) {
+              console.log(n);
+            }
+            return n * 2;
+          }
+          SOURCE
+          cp "$fixture/src/one.ts" "$fixture/src/two.ts"
+          cp "$fixture/src/one.ts" "$fixture/src/ignored.ts"
+          printf '%s\n' '{"path":["src"],"ignore":["**/ignored.ts"],"minTokens":10,"minLines":1,"threshold":0}' > "$fixture/selected.json"
+
+      - name: Audit configured duplication with advisory threshold
+        id: configured
+        uses: ./
+        with:
+          path: ${{ runner.temp }}/deburr config
+          format: json
+          duplicates: true
+          jscpd: jscpd
+          duplicates-config: ${{ runner.temp }}/deburr config/selected.json
+
+      - name: Audit configured duplication with enforced threshold
+        id: enforced
+        continue-on-error: true
+        uses: ./
+        with:
+          path: ${{ runner.temp }}/deburr config
+          format: json
+          duplicates: true
+          jscpd: jscpd
+          duplicates-config: ${{ runner.temp }}/deburr config/selected.json
+          enforce-duplicates-threshold: true
+
+      - name: Verify configuration and preserved threshold evidence
+        env:
+          ADVISORY_REPORT: ${{ steps.configured.outputs.report }}
+          ENFORCED_REPORT: ${{ steps.enforced.outputs.report }}
+          ENFORCED_OUTCOME: ${{ steps.enforced.outcome }}
+        shell: bash
+        run: |
+          test "$ENFORCED_OUTCOME" = failure
+          python3 - <<'PY'
+          import json
+          import os
+          for name in ("ADVISORY_REPORT", "ENFORCED_REPORT"):
+              with open(os.environ[name]) as handle:
+                  report = json.load(handle)
+              duplication = report["duplication"]
+              assert report["coverage"]["analyzed"] == 3
+              assert duplication["status"] == "measured"
+              assert duplication["threshold_exceeded"]
+              assert duplication["clones"]
+              assert duplication["percentages"][0]["files"] == 2
+              assert duplication["config"]["enforce_threshold"] == (name == "ENFORCED_REPORT")
+          PY

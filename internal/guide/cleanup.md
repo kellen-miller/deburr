@@ -134,7 +134,7 @@ for an artifact. The GitHub Action invokes this same CLI and exposes its report
 path. It does not add an independent analyzer or mandatory quality threshold.
 
 Duplication analysis is opt-in. The supported adapter uses CPD or jscpd major 5 (any minor/patch release),
-an 80-token and 8-line minimum, and an advisory 100% threshold. When it is
+an 80-token and 8-line minimum, and an advisory 100% threshold when no config overrides it. When it is
 enabled, keep its status, engine, version, and settings in the report so a
 later comparison cannot confuse a detector change with a code change. A
 nonzero tool exit makes the run incomplete; the threshold does not act as a
@@ -151,3 +151,10 @@ columns with inclusive end positions.
 The CLI has no composite score. Read the findings, measurements, and coverage
 that the report defines, then use engineering judgment and repository checks
 to decide what to keep.
+
+Duplication loads the nearest `.jscpd.json`, or an explicit
+`--duplicates-config FILE`. Its paths, exclusions, and `.gitignore` rules
+narrow duplication scope while native coverage stays visible. Effective
+settings and ignore-file digests are recorded for comparison. Thresholds stay
+advisory unless `--enforce-duplicates-threshold` (or the matching Action input)
+is enabled; enforcement preserves the measured clone evidence and percentages.

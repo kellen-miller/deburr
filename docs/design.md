@@ -228,3 +228,28 @@ owning function identity, rule, normalized finding content, and occurrence.
 Line moves can therefore change IDs when the owning function or occurrence
 changes; compare consumers should show that as a new/resolved candidate with
 the source evidence attached.
+
+## Duplication configuration
+
+Duplication discovers `.jscpd.json` in the target directory or its ancestors,
+stopping at the nearest repository root. An explicit `--duplicates-config`
+path overrides discovery. Config-relative `path`, `ignore`, `pattern`,
+`format`, and hierarchical `.gitignore` rules filter original paths before
+snapshotting; they intersect the native production/test selection and never
+widen it. Native metrics and coverage keep the full audited scope.
+
+The adapter validates minimum tokens/lines, mode, numeric thresholds (0–100),
+relative glob syntax, formats, and maximum file size. It passes supported
+extra detection settings through a sanitized isolated config. Output and
+execution settings remain adapter-owned; unsupported fields fail explicitly.
+Effective settings, the config scope root relative to the audit root, and the
+applicable `.gitignore` digest are part of comparison identity. Absolute
+config paths and snapshot paths are not report identities.
+
+The detector always runs with threshold 100 so a quality threshold cannot
+prevent evidence collection. JSON must contain measured percentages. Deburr
+records percentages and selected file counts per category, then evaluates the
+configured threshold. Exceeding it remains advisory unless enforcement is
+requested. Enforcement returns a nonzero CLI status while preserving measured
+clones, percentages, and a threshold-exceeded flag. Detector command failures
+remain incomplete measurements.

@@ -31,6 +31,11 @@ var semanticVersionPattern = regexp.MustCompile(`\b\d+\.\d+\.\d+\b`)
 var errDuplicationOutputLimit = errors.New("duplication command output exceeded limit")
 
 type cpdReport struct {
+	Statistics struct {
+		Total struct {
+			Percentage *float64 `json:"percentage"`
+		} `json:"total"`
+	} `json:"statistics"`
 	Duplicates *[]cpdDuplicate `json:"duplicates"`
 }
 
@@ -74,8 +79,13 @@ func (b *boundedBuffer) Write(value []byte) (int, error) {
 }
 
 func runDuplication(parent context.Context, state *analysisState) (*report.Duplication, error) {
-	config := state.report.Config.Duplication
-	result := &report.Duplication{Status: report.DuplicationError, Config: config}
+	config, files, err := configureDuplication(state)
+	result := &report.Duplication{Status: report.DuplicationError, Config: state.report.Config.Duplication}
+	if err != nil {
+		result.Error = err.Error()
+		return result, err
+	}
+
 	toolPath, err := resolveDuplicationTool(state.cfg.Duplication.Tool)
 	if err != nil {
 		result.Error = err.Error()
@@ -115,20 +125,20 @@ func runDuplication(parent context.Context, state *analysisState) (*report.Dupli
 	}
 
 	configPath := filepath.Join(tempRoot, "cpd-config.json")
-	if err := os.WriteFile(configPath, []byte("{}\n"), 0o600); err != nil {
+	if err := os.WriteFile(configPath, config.DetectorSettings, 0o600); err != nil {
 		result.Error = "write duplication config: " + cleanError(err)
 		return cleanupSnapshot(errors.New(result.Error))
 	}
 
-	groups := duplicationGroups(state.files)
+	groups := duplicationGroups(files)
 	categories := []report.Category{report.CategoryProduction, report.CategoryTest}
 	clones := make([]report.Clone, 0)
 	for _, category := range categories {
 		files := groups[category]
 		sort.Slice(files, func(i, j int) bool { return files[i].path < files[j].path })
-		categoryClones, categoryErr := runDuplicationCategory(
+		categoryClones, percentage, categoryErr := runDuplicationCategory(
 			parent,
-			state.cfg.Duplication,
+			config,
 			toolPath,
 			configPath,
 			tempRoot,
@@ -141,11 +151,23 @@ func runDuplication(parent context.Context, state *analysisState) (*report.Dupli
 		}
 
 		clones = append(clones, categoryClones...)
+		result.Percentages = append(result.Percentages, report.DuplicationPercentage{Category: category, Percentage: percentage, Files: len(files)})
 	}
 
 	sort.Slice(clones, func(i, j int) bool { return clones[i].ID < clones[j].ID })
 	result.Status = report.DuplicationMeasured
 	result.Clones = clones
+	threshold, _ := strconv.ParseFloat(config.Threshold, 64)
+	for _, measured := range result.Percentages {
+		if measured.Percentage > threshold {
+			result.ThresholdExceeded = true
+		}
+	}
+
+	if config.EnforceThreshold && result.ThresholdExceeded {
+		return cleanupSnapshot(fmt.Errorf("duplication exceeds configured threshold %s%%", config.Threshold))
+	}
+
 	return cleanupSnapshot(nil)
 }
 
@@ -235,26 +257,26 @@ func runDuplicationCategory(
 	toolPath, configPath, tempRoot string,
 	category report.Category,
 	files []*sourceFile,
-) ([]report.Clone, error) {
+) ([]report.Clone, float64, error) {
 	categoryRoot, selected, err := snapshotDuplicationSources(tempRoot, category, files)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
 	if len(files) == 0 {
-		return []report.Clone{}, nil
+		return []report.Clone{}, 0, nil
 	}
 
 	reportRoot := filepath.Join(tempRoot, string(category)+"-report")
 	if err := os.MkdirAll(reportRoot, 0o750); err != nil {
-		return nil, fmt.Errorf("create duplication report path: %w", err)
+		return nil, 0, fmt.Errorf("create duplication report path: %w", err)
 	}
 
 	args := []string{
-		"--format", "go,typescript,tsx",
+		"--format", config.Formats,
 		"--min-tokens", strconv.Itoa(config.MinTokens),
 		"--min-lines", strconv.Itoa(config.MinLines),
-		"--mode", "mild",
+		"--mode", config.Mode,
 		"--no-gitignore",
 		"--no-colors",
 		"--reporters", "json",
@@ -262,7 +284,7 @@ func runDuplicationCategory(
 		"--config", configPath,
 		"--max-size", "16mb",
 		"--workers", "1",
-		"--threshold", strings.TrimSuffix(config.Threshold, "%"),
+		"--threshold", "100",
 		categoryRoot,
 	}
 
@@ -272,31 +294,39 @@ func runDuplicationCategory(
 	jsonPath, reportErr := findCPDReport(reportRoot)
 	if reportErr != nil {
 		if commandErr != nil {
-			return nil, fmt.Errorf("duplication command failed for %s: %s", category, commandError(commandErr, stderr))
+			return nil, 0, fmt.Errorf("duplication command failed for %s: %s", category, commandError(commandErr, stderr))
 		}
 
-		return nil, reportErr
+		return nil, 0, reportErr
 	}
 
 	if commandErr != nil {
-		return nil, fmt.Errorf("duplication command failed for %s: %s", category, commandError(commandErr, stderr))
+		return nil, 0, fmt.Errorf("duplication command failed for %s: %s", category, commandError(commandErr, stderr))
 	}
 
 	data, err := readBoundedFile(jsonPath, duplicationOutputLimit)
 	if err != nil {
-		return nil, fmt.Errorf("read duplication report for %s: %s", category, cleanError(err))
+		return nil, 0, fmt.Errorf("read duplication report for %s: %s", category, cleanError(err))
 	}
 
 	var parsed cpdReport
 	if err := json.Unmarshal(data, &parsed); err != nil {
-		return nil, fmt.Errorf("decode duplication report for %s: %w", category, err)
+		return nil, 0, fmt.Errorf("decode duplication report for %s: %w", category, err)
 	}
 
 	if parsed.Duplicates == nil {
-		return nil, fmt.Errorf("decode duplication report for %s: duplicates field is missing", category)
+		return nil, 0, fmt.Errorf("decode duplication report for %s: duplicates field is missing", category)
 	}
 
-	return normalizeCPDClones(*parsed.Duplicates, category, tempRoot, selected)
+	percentage := 0.0
+	if parsed.Statistics.Total.Percentage != nil {
+		percentage = *parsed.Statistics.Total.Percentage
+	} else {
+		return nil, 0, fmt.Errorf("duplication report for %s omitted measured percentage", category)
+	}
+
+	clones, err := normalizeCPDClones(*parsed.Duplicates, category, tempRoot, selected)
+	return clones, percentage, err
 }
 
 func snapshotDuplicationSources(

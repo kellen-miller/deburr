@@ -1,6 +1,10 @@
 package analysis
 
-import "github.com/kellen-miller/deburr/internal/report"
+import (
+	"encoding/json"
+
+	"github.com/kellen-miller/deburr/internal/report"
+)
 
 const (
 	AnalyzerID      = "deburr/native"
@@ -29,11 +33,16 @@ type Config struct {
 // DuplicationConfig is intentionally opt-in. Native metrics do not depend
 // on an external detector.
 type DuplicationConfig struct {
-	Tool      string
-	Threshold string
-	MinTokens int
-	MinLines  int
-	Requested bool
+	ConfigPath       string
+	Formats          string
+	Mode             string
+	DetectorSettings json.RawMessage
+	EnforceThreshold bool
+	Tool             string
+	Threshold        string
+	MinTokens        int
+	MinLines         int
+	Requested        bool
 }
 
 func DefaultConfig() Config {
