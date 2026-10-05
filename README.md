@@ -2,236 +2,153 @@
 
 Find the rough edges that accumulate as code evolves.
 
-Deburr is an experimental, pre-1.0 deterministic code-quality CLI written in
-Go. It analyzes Go and TypeScript source and produces evidence for developers, coding agents,
-and CI. It does not invoke models, rewrite files, or claim that code is good or
-bad.
+Deburr is a deterministic code-quality CLI for Go and TypeScript. It reports
+function metrics, complexity, nesting, and branch findings with source
+locations, so developers, coding agents, and CI can see where code has grown
+hard to follow. It does not use models, rewrite files, or produce a composite
+quality score.
 
-**Status:** `v0.1.0` is the initial experimental release (Go-only, CPD
-5.3.0). TypeScript and major-version detector support describe current source
-and are unreleased. The analyzer
-currently identifies itself as `deburr/native` version `0.3.0`, and reports use
-schema `2`; those are analyzer and report compatibility versions, separate from
-the CLI release version.
+**Status:** `v0.2.0` is experimental and pre-1.0; reports and flags may change.
 
-## Current scope
+## What it analyzes
 
-- Go and TypeScript analysis (`.go`, `.ts`, `.tsx`, `.mts`, `.cts`).
-- Terminal text, JSON, HTML, and GitHub Actions report formats.
-- A thin GitHub Action that builds and runs the same CLI.
-- A harness-neutral cleanup skill with one canonical guide.
-- Source locations, raw measurements, coverage, and comparable reports.
-- Explicit production, test, generated, vendored, unsupported, and unparsed
-  coverage where the analyzer can identify those categories.
-- Optional duplication analysis, recorded with its status, engine, version,
-  and settings when requested. It is not requested by default.
+- Go and TypeScript: `.go`, `.ts`, `.tsx`, `.mts`, `.cts`.
+- Parser-only analysis, including files excluded by build constraints. No
+  type-checking, import resolution, or execution of target code.
+- Tests are analyzed separately from production code. `vendor`, generated
+  files, and `testdata` are excluded by default.
+- Coverage reports what was analyzed, excluded, unsupported, or unparsed.
+- JavaScript and framework component files are not supported.
 
-There is no model-based judgment, automatic refactoring, forced CI quality
-gate, or composite sloppiness score. Findings are evidence for review,
-not proof of AI authorship or poor design.
+Findings are advisory. Deburr exits nonzero for usage errors and for files it
+cannot read or parse, not because findings exist.
 
-The native analyzer is parser-only: it discovers regular Go and TypeScript files under
-the input, including files whose build constraints would exclude them from a
-particular build. It does not type-check, invoke `go list`, execute target
-code, or run a compiler. Configured category exclusions remain visible in
-coverage.
-
-## Install and run
-
-Install the initial experimental release with:
+## Install
 
 ```sh
-go install github.com/kellen-miller/deburr/cmd/deburr@v0.1.0
+go install github.com/kellen-miller/deburr/cmd/deburr@v0.2.0
 ```
 
-To build the current source from a checkout, use Go from the version declared
-by `go.mod`:
+Installing or building from source requires the Go version in `go.mod`. The
+compiled binary needs neither Go nor Node for native audits.
+
+## Quick start
 
 ```sh
-go install ./cmd/deburr
-deburr audit ./path/to/repository --format text --output report.txt
-deburr audit ./path/to/repository --format json --output report.json
-deburr compare report-before.json report-after.json --format text
-deburr review init report.json --output review.json
-deburr review apply report.json --ledger review.json --format html --output reviewed.html
-deburr guide cleanup
+# Print a text report
+deburr audit .
+
+# Write a JSON report outside the audited tree
+deburr audit . --format json --output /tmp/deburr-before.json
+
+# After changes, compare against the baseline
+deburr audit . --format json --output /tmp/deburr-after.json
+deburr compare /tmp/deburr-before.json /tmp/deburr-after.json
 ```
 
-Duplication is an explicit CLI opt-in: `--duplicates` looks for `cpd`, then
-`jscpd`, on `PATH`. `--cpd PATH` or `--jscpd PATH` selects an executable.
-Both names expose the same upstream detector. Deburr supports the current
-major, **5**, including all its minor and patch releases; it does not pin an
-exact version. Provision it with `npm install -g cpd@5` or
-`npm install -g jscpd@5`. Future majors require an adapter update.
-The adapter uses an 80-token, 8-line minimum and advisory threshold 100%.
-Reports record the exact installed version and settings; comparisons across
-versions remain incompatible so detector changes cannot appear as code
-improvements. Duplication remains off by default.
+Reports can be rendered as `text` (default), `json`, `html`, or `github`.
+`audit --output` rejects paths inside the audited directory, so keep reports
+somewhere else. Run `deburr audit --help` for all flags.
 
-Duplication discovers the nearest `.jscpd.json` from the audited directory
-(or a file's parent), searching up to the repository root. Use
-`--duplicates-config FILE` to select another configuration. Paths and globs
-are relative to the config directory and narrow duplication only; native
-coverage is unchanged. `.gitignore` rules, including nested rules and
-negations, are applied to original files before snapshotting, unless
-`gitignore: false` is configured. No Git executable is required for this.
+### Baselines and versions
 
-Supported scope settings are `path`, `ignore`, `pattern`, `gitignore`, and
-`format` (intersected with Go/TypeScript/TSX). Detection settings include
-`minTokens`, `minLines`, `maxLines`, `maxSize`, `mode`, `threshold`,
-`ignoreCase`, `ignoreIdentifiers`, `ignoreLiterals`, `ignoreAnnotations`,
-`ignorePattern`. `skipLocal: true` is rejected because category snapshots
-cannot preserve detector path groups. Deburr owns `reporters`, `output`, `workers`,
-`exitCode`, and presentation settings. Other settings are rejected explicitly.
-Config and ignore files are limited to 1 MiB; snapshot sources retain the
-16 MiB adapter limit. Config scopes that select no eligible sources fail
-explicitly. Configs in `.github/` can omit `path` to use the audited sources,
-or use config-relative paths such as `../src`. Git ignore inheritance starts
-at the repository root even when the detector config lives below it.
+Reports record the analyzer identity (currently `deburr/native` `0.3.0`,
+report schema `2`) and the settings used. These differ from the release tag;
+`deburr --version` prints the analyzer version. Changes to analyzer or detector
+versions or measurement settings can make reports incompatible. Rerun the
+baseline with matching versions and settings before comparing. See
+[docs/design.md](docs/design.md) for details.
 
-A configured threshold is advisory by default. Add
-`--enforce-duplicates-threshold` to fail if either production or test
-percentage exceeds it; the report keeps status `measured`, clone evidence,
-percentages, and `threshold_exceeded`. Native source categories still apply,
-so these percentages can differ from a standalone all-language detector run.
-Reports distinguish selected files from files actually analyzed by the detector.
-A nonempty category with zero detector sources fails explicitly.
-Reports retain effective settings and a digest of applicable `.gitignore`
-files so measurement changes invalidate comparisons. Duplication threshold
-and enforcement changes preserve comparison compatibility; both policies
-remain recorded in reports.
+### Reviewing findings
+
+`review init` creates a ledger to annotate with decisions and evidence;
+`review apply` validates it and renders the annotated report:
 
 ```sh
-deburr audit . --duplicates --duplicates-config .jscpd.json --format json
-deburr audit . --duplicates --enforce-duplicates-threshold --format json
+deburr review init /tmp/deburr-before.json --output /tmp/deburr-review.json
+deburr review apply /tmp/deburr-before.json --ledger /tmp/deburr-review.json \
+  --format html --output /tmp/deburr-reviewed.html
 ```
 
-The built CLI needs neither Go nor Node installed for native analysis. Go
-is required to build Deburr, including by the current GitHub Action.
-TypeScript uses bundled pure-Go tree-sitter grammars, without running `tsc`,
-reading project configuration, or resolving imports. Function declarations,
-methods, expressions, and arrow functions have separate metrics; signatures
-without bodies contribute no functions. `.test.*`, `.spec.*`, and files under
-`__tests__` are classified as tests. Parse failures remain visible and return
-a nonzero status. JavaScript and framework component files remain unsupported.
+## Duplication (optional)
 
-`deburr guide cleanup` prints the canonical workflow from
-[`internal/guide/cleanup.md`](internal/guide/cleanup.md). The CLI rejects audit
-output inside a directory target (and rejects the target itself when auditing
-a file). Keep reports in a harness-owned directory outside the scanned path,
-retain one baseline, and use unique output files for later iterations.
+Duplication detection is off by default and uses an external detector you
+install yourself. Deburr supports any CPD/jscpd release in major version 5:
 
-The report records analyzer and configuration identity. Treat incompatible
-comparisons as measurement changes that need a matching rerun. Read findings,
-raw measurements, and coverage together with the repository's normal tests;
-a lower measurement alone does not justify a refactor.
+```sh
+npm install -g jscpd@5
+deburr audit . --duplicates
+```
 
-Reports also retain source and build provenance: the content manifest is
-separate from Git commit and dirty-tree state, and the build record identifies
-the exact Deburr revision and toolchain used for the scan.
+`--duplicates` uses `cpd`, then `jscpd`, from `PATH`; `--cpd PATH` or
+`--jscpd PATH` selects an executable.
 
-Reports use schema 2 and can carry an external review ledger. `review init`
-creates an unreviewed inventory of findings, high-complexity functions, and
-measured clones. Edit decisions with concrete reason categories and evidence,
-then use `review apply` to validate fingerprints and render the annotated
-report. Missing items remain unreviewed; changed fingerprints are marked stale
-with their prior decision visible. Keep the baseline report and ledger
-together, and preserve the original baseline when auditing later revisions.
-Ledger scope follows the requested paths and source categories. Reason labels
-such as `cohesive-validation`, `lifecycle-ordering`, `distinct-semantics`,
-`generated-contract`, `scenario-clarity`, `low-benefit`, and `upstream` still
-need item-specific evidence; an upstream deferral also names its owner.
-Ambiguous identities require a known, unchanged source manifest before a
-decided ledger item can transfer; changed or unknown snapshots remain stale.
-Structural counters are parser-only signals, and clone families group connected
-duplicate regions while retaining each measured pair.
+- The nearest `.jscpd.json` up to the Git root is used; override it with
+  `--duplicates-config FILE`. Config paths and globs are relative to the config
+  directory, and `.gitignore` rules apply unless `gitignore: false` is set.
+- Config scopes only narrow duplication. Production and test code are measured
+  separately, so percentages can differ from a standalone jscpd run.
+- A configured threshold is advisory unless `--enforce-duplicates-threshold`
+  is passed. Exceeded thresholds still keep the clone evidence.
+- Empty scopes, unsupported settings, and `skipLocal: true` are errors.
+
+Reports record the detector version and effective config. See
+[docs/design.md](docs/design.md) for the supported settings.
 
 ## GitHub Action
 
-The root action builds the CLI source from its own `github.action_path` with
-the Go version in `go.mod`, then runs `audit`. It does not download a release
-artifact or invoke scripts from the target repository. These examples use
-current source on `main`; pin a reviewed commit for repeatable runs:
+The action sets up Go, builds Deburr from its own source, and runs `audit`:
 
 ```yaml
-- name: Check out the target
-  uses: actions/checkout@v4
+steps:
+  - uses: actions/checkout@v4
 
-- name: Deburr audit
-  id: deburr
-  uses: kellen-miller/deburr@main
-  with:
-    path: .
-    format: github
+  - id: deburr
+    uses: kellen-miller/deburr@v0.2.0
+    with:
+      path: .
 ```
 
-Supported inputs are `path` (default `.`), `format` (`text`, `json`, `html`,
-or `github`; default `github`), `duplicates` (default `false`), `cpd`, and
-`jscpd`, `duplicates-config`, and `enforce-duplicates-threshold` (default
-`false`). Set `duplicates: true` to opt into the same CPD/jscpd major 5 adapter
-exposed by the CLI. The optional detector input selects a caller-provided
-CPD/jscpd major 5 executable;
-the action does not download or install an analyzer. It always writes to a
-fresh, invocation-owned runner-temporary path outside the target tree. The
-`report` output contains that path only when the CLI produced a report. The
-action does not fail merely because findings exist; scanner errors preserve a
-newly produced report and return the CLI status so an `always()` artifact step
-can retain it:
+The report goes to a temp file outside the checkout, exposed as the `report`
+output. To keep it:
 
 ```yaml
-- name: Upload Deburr report
-  if: always() && steps.deburr.outputs.report != ''
-  uses: actions/upload-artifact@v4
-  with:
-    name: deburr-report
-    path: ${{ steps.deburr.outputs.report }}
+  - if: always() && steps.deburr.outputs.report != ''
+    uses: actions/upload-artifact@v4
+    with:
+      name: deburr-report
+      path: ${{ steps.deburr.outputs.report }}
 ```
 
-When duplication is enabled, provision CPD or jscpd major 5 in the caller
-workflow and pass its executable path if it is not on `PATH`:
+| Input | Default | Description |
+| --- | --- | --- |
+| `path` | `.` | File or directory to audit |
+| `format` | `github` | `text`, `json`, `html`, or `github` |
+| `duplicates` | `false` | Enable duplication detection |
+| `cpd` / `jscpd` | | Detector executable (use one) |
+| `duplicates-config` | | Explicit `.jscpd.json` |
+| `enforce-duplicates-threshold` | `false` | Fail when the threshold is exceeded |
+
+Duplication inputs require `duplicates: true`. The action does not install
+CPD or jscpd, so provision it first:
 
 ```yaml
-- name: Deburr audit with duplication
-  uses: kellen-miller/deburr@main
-  with:
-    path: .
-    format: json
-    duplicates: true
-    cpd: /opt/cpd/bin/cpd
-    duplicates-config: .jscpd.json
-    enforce-duplicates-threshold: true
+  - uses: actions/setup-node@v4
+  - run: npm install -g jscpd@5
+  - uses: kellen-miller/deburr@v0.2.0
+    with:
+      duplicates: true
 ```
 
-Use `jscpd` instead of `cpd` to select that executable; specifying both is an
-error. Detector paths, config paths, and threshold enforcement require
-`duplicates: true`. Config input paths are relative to the workspace unless
-absolute. The action rejects executables outside supported major 5. This keeps duplication
-provisioning visible to the caller while the action remains a thin wrapper
-around the CLI.
+The step fails on analyzer errors or an enforced duplication threshold, not on
+findings alone.
 
-The composite action uses Bash. The repository workflow is configured to smoke
-test the hosted Linux, macOS, and Windows runners. A self-hosted runner must
-provide Bash and the runner capabilities required by `actions/setup-go`.
+## Cleanup guide
 
-## Portable cleanup skill
-
-[`skills/deburr/SKILL.md`](skills/deburr/SKILL.md) is the distributable,
-harness-neutral entrypoint. It invokes `deburr guide cleanup` and keeps the
-workflow in the embedded canonical guide instead of maintaining a second set
-of cleanup instructions.
-
-## Design direction
-
-Deburr leads with findings, raw measurements, and changes over time. Existing
-repository checks remain useful evidence and are not silently replaced. The
-analyzer must make incomplete coverage visible, and cleanup must preserve
-behavior and local ownership boundaries. Do not add helpers or abstractions
-only to improve a measurement.
-
-See [research notes](docs/research.md) and the
-[Go analyzer/report contract](docs/design.md) for the current rationale and
-schema direction.
+`deburr guide cleanup` prints the workflow for acting on a report: keep a
+baseline, make behavior-preserving changes, and compare. The portable
+[skills/deburr/SKILL.md](skills/deburr/SKILL.md) skill invokes the same guide.
 
 ## License
 
-Deburr is available under the [MIT License](LICENSE).
+[MIT](LICENSE)
