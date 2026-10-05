@@ -5,7 +5,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"go/ast"
-	"go/parser"
 	"go/token"
 	"sort"
 	"strconv"
@@ -53,42 +52,20 @@ type normalizedClonePair struct {
 	ambiguous   bool
 }
 
-func buildCloneSourceScopes(selected map[string][]byte) map[string]cloneSourceScope {
-	scopes := make(map[string]cloneSourceScope, len(selected))
-	for path, source := range selected {
-		if isTypeScriptPath(path) {
-			tree, language, err := parseTypeScript(path, source)
-			if err != nil {
-				scopes[path] = cloneSourceScope{source: source}
-				continue
-			}
-
-			tokens := typescriptTokens(tree.RootNode(), language, source)
-			tree.Release()
-			functions, _, _ := analyzeTypeScript(&sourceFile{path: path, source: source})
-			scopes[path] = cloneSourceScope{source: source, tsFunctions: functions, tsTokens: tokens}
+func buildCloneSourceScopes(files []*sourceFile) map[string]cloneSourceScope {
+	scopes := make(map[string]cloneSourceScope, len(files))
+	for _, file := range files {
+		if isTypeScriptPath(file.path) {
+			scopes[file.path] = cloneSourceScope{source: file.source, tsFunctions: file.tsFunctions, tsTokens: file.tsTokens}
 			continue
 		}
 
-		fileSet := token.NewFileSet()
-		parsed, err := parser.ParseFile(fileSet, path, source, parser.ParseComments)
-		if err != nil || parsed == nil {
-			scopes[path] = cloneSourceScope{source: source, fileSet: fileSet}
-			continue
-		}
-
-		file := &sourceFile{
-			path:    path,
-			source:  source,
-			fileSet: fileSet,
-			astFile: parsed,
-		}
 		nodes := collectFunctions(file)
 		assignFunctionNames(nodes)
-		scopes[path] = cloneSourceScope{
-			source:    source,
-			fileSet:   fileSet,
-			astFile:   parsed,
+		scopes[file.path] = cloneSourceScope{
+			source:    file.source,
+			fileSet:   file.fileSet,
+			astFile:   file.astFile,
 			functions: nodes,
 		}
 	}

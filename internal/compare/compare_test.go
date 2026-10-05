@@ -413,14 +413,66 @@ func TestDuplicationEffectiveConfigurationChanges(t *testing.T) {
 		{"ignore", func(config *report.DuplicationConfig) { config.Ignore = []string{"**/fixture.ts"} }},
 		{"gitignore", func(config *report.DuplicationConfig) { config.GitignoreDigest = "changed" }},
 		{"root", func(config *report.DuplicationConfig) { config.ScopeRoot = ".." }},
-		{"enforcement", func(config *report.DuplicationConfig) { config.EnforceThreshold = true }},
+		{"min-tokens", func(config *report.DuplicationConfig) { config.MinTokens = 120 }},
 	} {
 		t.Run(change.name, func(t *testing.T) {
 			before, after := sampleReport(), sampleReport()
 			change.apply(&after.Duplication.Config)
+			before.Config.Duplication = before.Duplication.Config
+			after.Config.Duplication = after.Duplication.Config
 			comparison := compareDuplication(before.Duplication, after.Duplication)
 			if comparison.Comparable {
 				t.Fatal("changed detector configuration considered comparable")
+			}
+
+			result, err := Compare(&before, &after)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if result.Compatible || result.MetricsDelta != nil {
+				t.Fatalf("measurement change produced compatible report: %+v", result)
+			}
+		})
+	}
+}
+
+func TestCompareDuplicationPolicyChangesPreserveMeasurements(t *testing.T) {
+	for _, change := range []struct {
+		name  string
+		apply func(*report.DuplicationConfig)
+	}{
+		{"enforcement", func(config *report.DuplicationConfig) { config.EnforceThreshold = true }},
+		{"threshold", func(config *report.DuplicationConfig) { config.Threshold = "2" }},
+	} {
+		t.Run(change.name, func(t *testing.T) {
+			before, after := sampleReport(), sampleReport()
+			before.Duplication.Config.Threshold = "5"
+			after.Duplication.Config = before.Duplication.Config
+			change.apply(&after.Duplication.Config)
+			before.Config.Duplication = before.Duplication.Config
+			after.Config.Duplication = after.Duplication.Config
+			before.Duplication.Percentages = []report.DuplicationPercentage{{Category: report.CategoryProduction, Files: 2, Percentage: 3}}
+			after.Duplication.Percentages = before.Duplication.Percentages
+			after.Duplication.ThresholdExceeded = after.Duplication.Config.Threshold == "2"
+
+			result, err := Compare(&before, &after)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if !result.Compatible || !result.Complete || !result.Duplication.Comparable || result.MetricsDelta == nil {
+				t.Fatalf("policy change invalidated measurements: %+v", result)
+			}
+
+			if result.Duplication.BeforeConfig.Threshold != "5" ||
+				result.Duplication.AfterConfig.Threshold != after.Duplication.Config.Threshold ||
+				result.Duplication.AfterConfig.EnforceThreshold != after.Duplication.Config.EnforceThreshold {
+				t.Fatalf("comparison lost original policy: %+v", result.Duplication)
+			}
+
+			if before.Duplication.Config.Threshold != "5" || before.Config.Duplication.Threshold != "5" {
+				t.Fatal("comparison mutated input policy")
 			}
 		})
 	}

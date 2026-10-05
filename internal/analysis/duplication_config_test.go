@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -70,6 +71,7 @@ func TestDuplicationGitignoreHierarchy(t *testing.T) {
 
 func TestDuplicationConfigFailuresPreserveNativeReport(t *testing.T) {
 	for _, config := range []string{
+		`{"format":["javascript"]}`, `{"path":["missing"]}`, `{"ignore":["**/*.ts"]}`, `{"maxSize":1}`, `{"skipLocal":true}`,
 		`{"threshold":-1}`, `{"threshold":101}`, `{"minTokens":0}`, `{"minLines":-2}`,
 		`{"mode":"unknown"}`, `{"ignore":["[invalid"]}`, `{"path":[""]}`,
 		`{"maxSize":"-9223372036854775807kb"}`, `{"maxSize":0}`, `{"semantic":true}`, `{"ignoreCase":"yes"}`, `{"maxLines":0}`, `[]`, `{`,
@@ -179,5 +181,88 @@ func TestDuplicationFormatPatternAndSize(t *testing.T) {
 	config, selected, err := configureDuplication(state)
 	if err != nil || len(selected) != 1 || selected[0].path != "src/one.ts" || config.Formats != "typescript" || state.report.Config.Duplication.MaxFileBytes != 1024 {
 		t.Fatalf("selected %+v, config %+v, error %v", selected, config, err)
+	}
+}
+
+func TestDuplicationConfigOutsideSourceTree(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, root, "source.ts", "export const value = () => 42;\n")
+	configPath := filepath.Join(root, ".github", "jscpd.json")
+	cfg := DefaultConfig()
+	cfg.Duplication = DuplicationConfig{Requested: true, Tool: writeVersionTool(t, "5.4.0"), ConfigPath: configPath, EnforceThreshold: true}
+	for _, config := range []string{`{}`, `{"path":["../source.ts"]}`, `{"skipLocal":false}`} {
+		writeTestFile(t, root, ".github/jscpd.json", config)
+		result, err := Analyze(t.Context(), root, cfg)
+		if err != nil || result.Duplication.Status != report.DuplicationMeasured || result.Duplication.Percentages[0].SelectedFiles != 1 {
+			t.Fatalf("config %s: %+v, %v", config, result.Duplication, err)
+		}
+	}
+}
+
+func TestDuplicationNestedConfigIncludesAncestorGitignore(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, root, ".git", "gitdir: ignored\n")
+	writeTestFile(t, root, ".gitignore", "ignored/\n")
+	writeTestFile(t, root, "web/.jscpd.json", `{}`)
+	cfg := DefaultConfig()
+	cfg.Duplication.Requested = true
+	cfg = cfg.normalized()
+	state := &analysisState{base: filepath.Join(root, "web"), cfg: cfg, report: report.Report{Config: cfg.reportSummary()}, files: []*sourceFile{
+		{path: "one.ts", status: report.FileAnalyzed, category: report.CategoryProduction},
+		{path: "ignored/two.ts", status: report.FileAnalyzed, category: report.CategoryProduction},
+	}}
+	_, selected, err := configureDuplication(state)
+	if err != nil || len(selected) != 1 || selected[0].path != "one.ts" {
+		t.Fatalf("ancestor rules not applied: %+v, %v", selected, err)
+	}
+
+	before := state.report.Config.Duplication.GitignoreDigest
+	writeTestFile(t, root, ".gitignore", "ignored/\n# changed policy source\n")
+	_, _, err = configureDuplication(state)
+	if err != nil || before == state.report.Config.Duplication.GitignoreDigest {
+		t.Fatalf("ancestor ignore missing from identity: %v", err)
+	}
+}
+
+func TestDuplicationRealLargeSourcesAndDetectorFilters(t *testing.T) {
+	tool, err := exec.LookPath("jscpd")
+	if err != nil {
+		t.Skip("jscpd unavailable")
+	}
+
+	if _, err := verifyDuplicationTool(t.Context(), DuplicationConfig{Tool: tool}, tool); err != nil {
+		t.Skipf("major 5 unavailable: %v", err)
+	}
+
+	root := t.TempDir()
+	var source strings.Builder
+	source.WriteString("export function value(n: number) {\n")
+	for index := 0; index < 1500; index++ {
+		source.WriteString("n += " + strconv.Itoa(index) + ";\n")
+	}
+
+	source.WriteString("return n;\n}\n")
+	writeTestFile(t, root, "one.ts", source.String())
+	writeTestFile(t, root, "two.ts", source.String())
+	writeTestFile(t, root, ".jscpd.json", `{"minTokens":10,"minLines":1}`)
+	cfg := DefaultConfig()
+	cfg.Duplication = DuplicationConfig{Requested: true, Tool: tool}
+	result, err := Analyze(t.Context(), root, cfg)
+	if err != nil || len(result.Duplication.Clones) == 0 || result.Duplication.Percentages[0].Files != 2 || result.Duplication.Percentages[0].SelectedFiles != 2 {
+		t.Fatalf("large sources were skipped: %+v, %v", result.Duplication, err)
+	}
+
+	writeTestFile(t, root, "small.ts", "export function small() {\nreturn 1;\n}\n")
+	writeTestFile(t, root, ".jscpd.json", `{"minTokens":10,"minLines":1,"maxLines":1000}`)
+	result, err = Analyze(t.Context(), root, cfg)
+	if err != nil || result.Duplication.Percentages[0].Files != 1 || result.Duplication.Percentages[0].SelectedFiles != 3 {
+		t.Fatalf("filtered source count is inaccurate: %+v, %v", result.Duplication, err)
+	}
+
+	writeTestFile(t, root, ".jscpd.json", `{"minTokens":10,"minLines":1,"maxLines":1000,"ignore":["small.ts"]}`)
+	cfg.Duplication.EnforceThreshold = true
+	result, err = Analyze(t.Context(), root, cfg)
+	if err == nil || result.Duplication.Status != report.DuplicationError || !strings.Contains(err.Error(), "source count") {
+		t.Fatalf("empty detector measurement passed: %+v, %v", result.Duplication, err)
 	}
 }

@@ -474,14 +474,14 @@ func TestDuplicationThresholdEvidenceInReports(t *testing.T) {
 	value.Duplication.Config.EnforceThreshold = true
 	value.Duplication.Config.Threshold = "5"
 	value.Duplication.ThresholdExceeded = true
-	value.Duplication.Percentages = []report.DuplicationPercentage{{Category: report.CategoryProduction, Percentage: 75, Files: 2}}
+	value.Duplication.Percentages = []report.DuplicationPercentage{{Category: report.CategoryProduction, Percentage: 75, Files: 2, SelectedFiles: 3}}
 	for _, format := range []Format{FormatText, FormatHTML, FormatGitHub} {
 		var output bytes.Buffer
 		if err := Write(&output, &value, format); err != nil {
 			t.Fatal(err)
 		}
 
-		if !strings.Contains(output.String(), "75.00% duplication across 2 files") {
+		if !strings.Contains(output.String(), "75.00% duplication across 2 files (3 selected)") {
 			t.Fatalf("%s lost measured percentage: %s", format, output.String())
 		}
 

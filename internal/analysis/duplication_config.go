@@ -151,7 +151,14 @@ func configureDuplication(state *analysisState) (DuplicationConfig, []*sourceFil
 					continue
 				}
 
-			case "ignoreCase", "ignoreIdentifiers", "ignoreLiterals", "ignoreAnnotations", "skipLocal":
+			case "skipLocal":
+				var enabled bool
+				err = json.Unmarshal(value, &enabled)
+				if err == nil && enabled {
+					err = errors.New("true is unsupported: isolated category snapshots cannot preserve detector path groups")
+				}
+
+			case "ignoreCase", "ignoreIdentifiers", "ignoreLiterals", "ignoreAnnotations":
 				var enabled bool
 				err = json.Unmarshal(value, &enabled)
 				if err == nil {
@@ -221,11 +228,34 @@ func configureDuplication(state *analysisState) (DuplicationConfig, []*sourceFil
 		}
 	}
 
+	if len(formats) == 0 {
+		return config, nil, errors.New("duplication config selects no supported formats")
+	}
+
 	config.Formats = strings.Join(formats, ",")
 	config.Mode = mode
 	config.DetectorSettings, err = json.Marshal(settings)
 	if err != nil {
 		return config, nil, fmt.Errorf("encode effective duplication settings: %w", err)
+	}
+
+	// Git ignore inheritance starts at the repository, independently of where
+	// the detector config lives. Without a repository, include a containing
+	// config directory when auditing one of its subdirectories.
+	ignoreRoot := state.base
+	if relative, err := filepath.Rel(root, state.base); err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		ignoreRoot = root
+	}
+
+	for directory := state.base; ; directory = filepath.Dir(directory) {
+		if _, err := os.Stat(filepath.Join(directory, ".git")); err == nil {
+			ignoreRoot = directory
+			break
+		}
+
+		if directory == filepath.Dir(directory) {
+			break
+		}
 	}
 
 	selected := make([]*sourceFile, 0)
@@ -249,8 +279,8 @@ func configureDuplication(state *analysisState) (DuplicationConfig, []*sourceFil
 
 		original := filepath.Join(state.base, filepath.FromSlash(file.path))
 		relative, err := filepath.Rel(root, original)
-		if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
-			continue
+		if err != nil {
+			return config, nil, fmt.Errorf("resolve duplication source %q relative to config: %w", file.path, err)
 		}
 
 		relative = filepath.ToSlash(relative)
@@ -270,7 +300,12 @@ func configureDuplication(state *analysisState) (DuplicationConfig, []*sourceFil
 		}
 
 		if respectGitignore {
-			ignored, err := duplicationGitignored(root, relative, ignoreFiles)
+			ignoreRelative, err := filepath.Rel(ignoreRoot, original)
+			if err != nil {
+				return config, nil, fmt.Errorf("resolve duplication gitignore source %q: %w", file.path, err)
+			}
+
+			ignored, err := duplicationGitignored(ignoreRoot, filepath.ToSlash(ignoreRelative), ignoreFiles)
 			if err != nil {
 				return config, nil, err
 			}
@@ -283,6 +318,10 @@ func configureDuplication(state *analysisState) (DuplicationConfig, []*sourceFil
 		selected = append(selected, file)
 	}
 
+	if len(selected) == 0 {
+		return config, nil, errors.New("duplication config selects no eligible sources; check paths, ignores, formats, and size limits")
+	}
+
 	ignoreNames := make([]string, 0, len(ignoreFiles))
 	for path := range ignoreFiles {
 		if ignoreFiles[path] != nil {
@@ -292,6 +331,10 @@ func configureDuplication(state *analysisState) (DuplicationConfig, []*sourceFil
 
 	sort.Strings(ignoreNames)
 	var ignoreIdentity strings.Builder
+	if relativeRoot, err := filepath.Rel(state.base, ignoreRoot); err == nil {
+		ignoreIdentity.WriteString(filepath.ToSlash(relativeRoot) + "\x00")
+	}
+
 	for _, path := range ignoreNames {
 		ignoreIdentity.WriteString(path + "\x00" + string(ignoreFiles[path]) + "\x00")
 	}

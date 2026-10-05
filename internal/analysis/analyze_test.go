@@ -635,7 +635,7 @@ func Two() int {
 }
 `)
 
-	left, err := normalizeCPDClones([]cpdDuplicate{
+	left, err := normalizeTestCPDClones(t, []cpdDuplicate{
 		{
 			FirstFile: cpdFile{
 				Name: "one.go", StartLoc: cpdPoint{Line: 4, Column: 2}, EndLoc: cpdPoint{Line: 4, Column: 9},
@@ -654,7 +654,7 @@ func Two() int {
 		t.Fatalf("normalize left clones: %v", err)
 	}
 
-	right, err := normalizeCPDClones([]cpdDuplicate{
+	right, err := normalizeTestCPDClones(t, []cpdDuplicate{
 		{
 			FirstFile: cpdFile{
 				Name: "one.go", StartLoc: cpdPoint{Line: 7, Column: 2}, EndLoc: cpdPoint{Line: 7, Column: 9},
@@ -718,7 +718,7 @@ func Two() int {
 		},
 	}
 
-	clones, err := normalizeCPDClones(
+	clones, err := normalizeTestCPDClones(t,
 		duplicates,
 		report.CategoryProduction,
 		"/tmp/snapshot",
@@ -740,7 +740,7 @@ func Two() int {
 		t.Fatalf("repeated clone occurrences not marked ambiguous: %+v", clones)
 	}
 
-	changed, err := normalizeCPDClones([]cpdDuplicate{
+	changed, err := normalizeTestCPDClones(t, []cpdDuplicate{
 		{
 			FirstFile: cpdFile{
 				Name: "one.go", StartLoc: cpdPoint{Line: 4, Column: 2}, EndLoc: cpdPoint{Line: 4, Column: 9},
@@ -826,7 +826,7 @@ return 2
 		},
 	}
 
-	clones, err := normalizeCPDClones(
+	clones, err := normalizeTestCPDClones(t,
 		duplicates,
 		report.CategoryProduction,
 		"/tmp/snapshot",

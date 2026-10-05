@@ -36,10 +36,6 @@ func physicalLineCount(source []byte) int {
 }
 
 func sourceLineMap(filename string, source []byte) []bool {
-	if isTypeScriptPath(filename) {
-		return typescriptLineMap(filename, source)
-	}
-
 	lineCode := make([]bool, physicalLineCount(source)+1)
 	file := token.NewFileSet().AddFile(filename, -1, len(source))
 	var sourceScanner scanner.Scanner

@@ -183,7 +183,7 @@ func writeTextDuplication(out *strings.Builder, value *report.Report) {
 	fmt.Fprintf(out, " mode=%s gitignore=%t enforce_threshold=%t threshold_exceeded=%t\n",
 		config.Mode, config.Gitignore, config.EnforceThreshold, value.Duplication.ThresholdExceeded)
 	for _, measured := range value.Duplication.Percentages {
-		fmt.Fprintf(out, "- %s: %.2f%% duplication across %d files\n", measured.Category, measured.Percentage, measured.Files)
+		fmt.Fprintf(out, "- %s: %.2f%% duplication across %d files (%d selected)\n", measured.Category, measured.Percentage, measured.Files, measured.SelectedFiles)
 	}
 
 	for cloneIndex := range value.Duplication.Clones {
