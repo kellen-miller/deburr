@@ -38,6 +38,7 @@ Flags:
   --include-vendor      analyze source files under vendor
   --include-generated   analyze generated source files
   --max-file-bytes N    exclude source files larger than N bytes
+  --quiet               suppress progress messages on stderr
   --duplicates          run CPD/jscpd major 5 from PATH
   --cpd PATH            run a CPD/jscpd executable (major 5)
   --jscpd PATH          alias for --cpd PATH
@@ -154,9 +155,16 @@ func runAudit(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 		}
 	}
 
-	value, analysisErr := analysis.Analyze(ctx, target, options.config)
+	progress := stderr
+	if options.quiet {
+		progress = io.Discard
+	}
+
+	value, analysisErr := analysis.Analyze(ctx, target, options.config, progress)
+	_, _ = fmt.Fprintln(progress, "deburr: collecting source provenance")
 	applyProvenance(&value, target)
 	report.InitializeReview(&value)
+	_, _ = fmt.Fprintf(progress, "deburr: writing %s report\n", options.format)
 	if err := writeAuditReport(&value, target, &options, stdout); err != nil {
 		return exitWithError(stderr, exitFailure, err)
 	}
@@ -165,6 +173,7 @@ func runAudit(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 		return exitWithError(stderr, exitFailure, analysisErr)
 	}
 
+	_, _ = fmt.Fprintln(progress, "deburr: audit complete")
 	return exitSuccess
 }
 

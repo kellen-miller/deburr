@@ -2,6 +2,7 @@ package analysis
 
 import (
 	"encoding/json"
+	"io"
 	"os/exec"
 	"path/filepath"
 	"strconv"
@@ -82,7 +83,7 @@ func TestDuplicationConfigFailuresPreserveNativeReport(t *testing.T) {
 			writeTestFile(t, root, "source.ts", "const value = () => 42;\n")
 			cfg := DefaultConfig()
 			cfg.Duplication.Requested = true
-			result, err := Analyze(t.Context(), root, cfg)
+			result, err := Analyze(t.Context(), root, cfg, io.Discard)
 			if err == nil || result.Coverage.Analyzed != 1 || len(result.Functions) != 1 || result.Duplication.Status != report.DuplicationError {
 				t.Fatalf("report %+v, error %v", result, err)
 			}
@@ -100,7 +101,7 @@ func TestDuplicationExplicitConfigAndGitignoreOverride(t *testing.T) {
 	cfg.Duplication.Requested = true
 	cfg.Duplication.Tool = writeVersionTool(t, "5.4.0")
 	cfg.Duplication.ConfigPath = filepath.Join(root, "custom.json")
-	result, err := Analyze(t.Context(), root, cfg)
+	result, err := Analyze(t.Context(), root, cfg, io.Discard)
 	if err != nil || result.Duplication.Config.Gitignore || len(result.Duplication.Percentages) != 2 {
 		t.Fatalf("report %+v, error %v", result.Duplication, err)
 	}
@@ -111,7 +112,7 @@ func TestDuplicationExplicitConfigAndGitignoreOverride(t *testing.T) {
 	}
 
 	cfg.Duplication.ConfigPath = filepath.Join(root, "missing.json")
-	result, err = Analyze(t.Context(), root, cfg)
+	result, err = Analyze(t.Context(), root, cfg, io.Discard)
 	if err == nil || result.Duplication.Status != report.DuplicationError {
 		t.Fatal("missing explicit configuration silently ignored")
 	}
@@ -136,7 +137,7 @@ func TestDuplicationRealConfigAndThresholdPolicy(t *testing.T) {
 	writeTestFile(t, root, ".jscpd.json", `{"path":["src"],"ignore":["**/ignored.ts"],"minTokens":10,"minLines":1,"threshold":0,"reporters":["threshold"]}`)
 	cfg := DefaultConfig()
 	cfg.Duplication = DuplicationConfig{Requested: true, Tool: tool}
-	advisory, err := Analyze(t.Context(), root, cfg)
+	advisory, err := Analyze(t.Context(), root, cfg, io.Discard)
 	if err != nil || !advisory.Duplication.ThresholdExceeded || len(advisory.Duplication.Clones) == 0 {
 		t.Fatalf("advisory %+v, error %v", advisory.Duplication, err)
 	}
@@ -154,13 +155,13 @@ func TestDuplicationRealConfigAndThresholdPolicy(t *testing.T) {
 	}
 
 	cfg.Duplication.EnforceThreshold = true
-	enforced, err := Analyze(t.Context(), root, cfg)
+	enforced, err := Analyze(t.Context(), root, cfg, io.Discard)
 	if err == nil || enforced.Duplication.Status != report.DuplicationMeasured || len(enforced.Duplication.Clones) != len(advisory.Duplication.Clones) {
 		t.Fatalf("threshold failed to preserve measured evidence: %+v, %v", enforced.Duplication, err)
 	}
 
 	writeTestFile(t, root, ".jscpd.json", `{"path":["src"],"ignore":["**/two.ts","**/ignored.ts"],"minTokens":10,"minLines":1,"threshold":0}`)
-	clean, err := Analyze(t.Context(), root, cfg)
+	clean, err := Analyze(t.Context(), root, cfg, io.Discard)
 	if err != nil || clean.Duplication.ThresholdExceeded || len(clean.Duplication.Clones) != 0 {
 		t.Fatalf("filtered threshold %+v, %v", clean.Duplication, err)
 	}
@@ -192,7 +193,7 @@ func TestDuplicationConfigOutsideSourceTree(t *testing.T) {
 	cfg.Duplication = DuplicationConfig{Requested: true, Tool: writeVersionTool(t, "5.4.0"), ConfigPath: configPath, EnforceThreshold: true}
 	for _, config := range []string{`{}`, `{"path":["../source.ts"]}`, `{"skipLocal":false}`} {
 		writeTestFile(t, root, ".github/jscpd.json", config)
-		result, err := Analyze(t.Context(), root, cfg)
+		result, err := Analyze(t.Context(), root, cfg, io.Discard)
 		if err != nil || result.Duplication.Status != report.DuplicationMeasured || result.Duplication.Percentages[0].SelectedFiles != 1 {
 			t.Fatalf("config %s: %+v, %v", config, result.Duplication, err)
 		}
@@ -247,21 +248,21 @@ func TestDuplicationRealLargeSourcesAndDetectorFilters(t *testing.T) {
 	writeTestFile(t, root, ".jscpd.json", `{"minTokens":10,"minLines":1}`)
 	cfg := DefaultConfig()
 	cfg.Duplication = DuplicationConfig{Requested: true, Tool: tool}
-	result, err := Analyze(t.Context(), root, cfg)
+	result, err := Analyze(t.Context(), root, cfg, io.Discard)
 	if err != nil || len(result.Duplication.Clones) == 0 || result.Duplication.Percentages[0].Files != 2 || result.Duplication.Percentages[0].SelectedFiles != 2 {
 		t.Fatalf("large sources were skipped: %+v, %v", result.Duplication, err)
 	}
 
 	writeTestFile(t, root, "small.ts", "export function small() {\nreturn 1;\n}\n")
 	writeTestFile(t, root, ".jscpd.json", `{"minTokens":10,"minLines":1,"maxLines":1000}`)
-	result, err = Analyze(t.Context(), root, cfg)
+	result, err = Analyze(t.Context(), root, cfg, io.Discard)
 	if err != nil || result.Duplication.Percentages[0].Files != 1 || result.Duplication.Percentages[0].SelectedFiles != 3 {
 		t.Fatalf("filtered source count is inaccurate: %+v, %v", result.Duplication, err)
 	}
 
 	writeTestFile(t, root, ".jscpd.json", `{"minTokens":10,"minLines":1,"maxLines":1000,"ignore":["small.ts"]}`)
 	cfg.Duplication.EnforceThreshold = true
-	result, err = Analyze(t.Context(), root, cfg)
+	result, err = Analyze(t.Context(), root, cfg, io.Discard)
 	if err == nil || result.Duplication.Status != report.DuplicationError || !strings.Contains(err.Error(), "source count") {
 		t.Fatalf("empty detector measurement passed: %+v, %v", result.Duplication, err)
 	}

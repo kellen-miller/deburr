@@ -131,3 +131,16 @@ func TestDuplicationConfigurationOptions(t *testing.T) {
 		t.Fatal("accepted duplication configuration outside audit")
 	}
 }
+
+func TestQuietIsAnAuditFlag(t *testing.T) {
+	for _, args := range [][]string{{"--quiet"}, {"--quiet=true"}} {
+		_, _, err := parseOptions(args, false)
+		if err == nil {
+			t.Fatalf("compare accepted %v", args)
+		}
+	}
+
+	if _, _, err := parseOptions([]string{"--quiet=true"}, true); err == nil {
+		t.Fatal("quiet accepted a value")
+	}
+}

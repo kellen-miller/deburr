@@ -274,3 +274,31 @@ jobs:
               assert duplication["percentages"][0]["files"] == 2
               assert duplication["config"]["enforce_threshold"] == (name == "ENFORCED_REPORT")
           PY
+
+  typescript-integration:
+    name: VS Code TypeScript integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Check out pinned VS Code sources
+        uses: actions/checkout@v4
+        with:
+          repository: microsoft/vscode
+          ref: bd64649be19f2da0f09c2ab84c066c6c764b83be
+          path: .integration/vscode
+          sparse-checkout: src
+
+      - name: Audit real TypeScript without CGO
+        env:
+          CGO_ENABLED: 0
+          DEBURR_VSCODE_SRC: ${{ github.workspace }}/.integration/vscode/src
+        run: go test -v ./internal/analysis -run '^TestVSCodeTypeScriptIntegration$' -count=1 -timeout=15m
