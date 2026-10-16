@@ -11,7 +11,94 @@ permissions:
   contents: read
 
 jobs:
+  changes:
+    uses: kellen-miller/ci/.github/workflows/changed-paths.yaml@f01aacda5b78c7b67d1dc840bd0432be852a69a4
+    with:
+      filters: |
+        {
+          "go": [
+            ".github/workflows/**",
+            ".github/actions/**",
+            "go.mod",
+            "go.sum",
+            "go.work",
+            "go.work.sum",
+            "**/*.go",
+            "cmd/**",
+            "internal/**",
+            "pkg/**",
+            "testdata/**",
+            "fixtures/**",
+            "scripts/**",
+            ".golangci*",
+            "Taskfile*",
+            "Makefile"
+          ],
+          "action": [
+            ".github/workflows/**",
+            ".github/actions/**",
+            "go.mod",
+            "go.sum",
+            "go.work",
+            "go.work.sum",
+            "**/*.go",
+            "cmd/**",
+            "internal/**",
+            "pkg/**",
+            "testdata/**",
+            "fixtures/**",
+            "scripts/**",
+            ".golangci*",
+            "Taskfile*",
+            "Makefile",
+            "action.yml",
+            ".gitignore",
+            ".jscpd.json"
+          ],
+          "detectors": [
+            ".github/workflows/**",
+            ".github/actions/**",
+            "go.mod",
+            "go.sum",
+            "go.work",
+            "go.work.sum",
+            "**/*.go",
+            "cmd/**",
+            "internal/**",
+            "pkg/**",
+            "testdata/**",
+            "fixtures/**",
+            "scripts/**",
+            ".golangci*",
+            "Taskfile*",
+            "Makefile",
+            "action.yml",
+            ".gitignore",
+            ".jscpd.json"
+          ],
+          "typescript": [
+            ".github/workflows/**",
+            ".github/actions/**",
+            "go.mod",
+            "go.sum",
+            "go.work",
+            "go.work.sum",
+            "**/*.go",
+            "cmd/**",
+            "internal/**",
+            "pkg/**",
+            "testdata/**",
+            "fixtures/**",
+            "scripts/**",
+            ".golangci*",
+            "Taskfile*",
+            "Makefile"
+          ]
+        }
+
   go:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).go) }}
     name: Go (${{ matrix.os }})
     strategy:
       fail-fast: false
@@ -29,6 +116,8 @@ jobs:
       build-target: ./cmd/deburr
 
   action-smoke:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).action) }}
     name: GitHub Action smoke test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
@@ -59,6 +148,8 @@ jobs:
         run: test -s "$REPORT"
 
   action-duplication-smoke:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).action) }}
     name: GitHub Action duplication smoke test
     runs-on: ubuntu-latest
     steps:
@@ -162,6 +253,8 @@ jobs:
           grep -q 'unsupported' "$REPORT"
 
   duplication-real:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).detectors) }}
     name: CPD/jscpd major 5 integration
     runs-on: ubuntu-latest
     steps:
@@ -270,6 +363,8 @@ jobs:
           PY
 
   typescript-integration:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).typescript) }}
     name: VS Code TypeScript integration
     runs-on: ubuntu-latest
     timeout-minutes: 20
