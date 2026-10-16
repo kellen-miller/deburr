@@ -11,7 +11,103 @@ permissions:
   contents: read
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      changes: ${{ steps.paths.outputs.changes }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - id: paths
+        uses: kellen-miller/ci/.github/actions/changed-paths@75c70f9d5db7117810669e0af01fd2eafdc396c6
+        with:
+          filters: |
+            {
+              "go": [
+                ".github/workflows/**",
+                ".github/actions/**",
+                "go.mod",
+                "go.sum",
+                "go.work",
+                "go.work.sum",
+                "**/*.go",
+                "cmd/**",
+                "internal/**",
+                "pkg/**",
+                "testdata/**",
+                "fixtures/**",
+                "scripts/**",
+                ".golangci*",
+                "Taskfile*",
+                "Makefile"
+              ],
+              "action": [
+                ".github/workflows/**",
+                ".github/actions/**",
+                "go.mod",
+                "go.sum",
+                "go.work",
+                "go.work.sum",
+                "**/*.go",
+                "cmd/**",
+                "internal/**",
+                "pkg/**",
+                "testdata/**",
+                "fixtures/**",
+                "scripts/**",
+                ".golangci*",
+                "Taskfile*",
+                "Makefile",
+                "action.yml",
+                ".gitignore",
+                ".jscpd.json"
+              ],
+              "detectors": [
+                ".github/workflows/**",
+                ".github/actions/**",
+                "go.mod",
+                "go.sum",
+                "go.work",
+                "go.work.sum",
+                "**/*.go",
+                "cmd/**",
+                "internal/**",
+                "pkg/**",
+                "testdata/**",
+                "fixtures/**",
+                "scripts/**",
+                ".golangci*",
+                "Taskfile*",
+                "Makefile",
+                "action.yml",
+                ".gitignore",
+                ".jscpd.json"
+              ],
+              "typescript": [
+                ".github/workflows/**",
+                ".github/actions/**",
+                "go.mod",
+                "go.sum",
+                "go.work",
+                "go.work.sum",
+                "**/*.go",
+                "cmd/**",
+                "internal/**",
+                "pkg/**",
+                "testdata/**",
+                "fixtures/**",
+                "scripts/**",
+                ".golangci*",
+                "Taskfile*",
+                "Makefile"
+              ]
+            }
+
   go:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).go) }}
     name: Go (${{ matrix.os }})
     strategy:
       fail-fast: false
@@ -29,6 +125,8 @@ jobs:
       build-target: ./cmd/deburr
 
   action-smoke:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).action) }}
     name: GitHub Action smoke test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
@@ -59,6 +157,8 @@ jobs:
         run: test -s "$REPORT"
 
   action-duplication-smoke:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).action) }}
     name: GitHub Action duplication smoke test
     runs-on: ubuntu-latest
     steps:
@@ -162,6 +262,8 @@ jobs:
           grep -q 'unsupported' "$REPORT"
 
   duplication-real:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).detectors) }}
     name: CPD/jscpd major 5 integration
     runs-on: ubuntu-latest
     steps:
@@ -270,6 +372,8 @@ jobs:
           PY
 
   typescript-integration:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).typescript) }}
     name: VS Code TypeScript integration
     runs-on: ubuntu-latest
     timeout-minutes: 20
