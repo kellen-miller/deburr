@@ -12,89 +12,98 @@ permissions:
 
 jobs:
   changes:
-    uses: kellen-miller/ci/.github/workflows/changed-paths.yaml@f01aacda5b78c7b67d1dc840bd0432be852a69a4
-    with:
-      filters: |
-        {
-          "go": [
-            ".github/workflows/**",
-            ".github/actions/**",
-            "go.mod",
-            "go.sum",
-            "go.work",
-            "go.work.sum",
-            "**/*.go",
-            "cmd/**",
-            "internal/**",
-            "pkg/**",
-            "testdata/**",
-            "fixtures/**",
-            "scripts/**",
-            ".golangci*",
-            "Taskfile*",
-            "Makefile"
-          ],
-          "action": [
-            ".github/workflows/**",
-            ".github/actions/**",
-            "go.mod",
-            "go.sum",
-            "go.work",
-            "go.work.sum",
-            "**/*.go",
-            "cmd/**",
-            "internal/**",
-            "pkg/**",
-            "testdata/**",
-            "fixtures/**",
-            "scripts/**",
-            ".golangci*",
-            "Taskfile*",
-            "Makefile",
-            "action.yml",
-            ".gitignore",
-            ".jscpd.json"
-          ],
-          "detectors": [
-            ".github/workflows/**",
-            ".github/actions/**",
-            "go.mod",
-            "go.sum",
-            "go.work",
-            "go.work.sum",
-            "**/*.go",
-            "cmd/**",
-            "internal/**",
-            "pkg/**",
-            "testdata/**",
-            "fixtures/**",
-            "scripts/**",
-            ".golangci*",
-            "Taskfile*",
-            "Makefile",
-            "action.yml",
-            ".gitignore",
-            ".jscpd.json"
-          ],
-          "typescript": [
-            ".github/workflows/**",
-            ".github/actions/**",
-            "go.mod",
-            "go.sum",
-            "go.work",
-            "go.work.sum",
-            "**/*.go",
-            "cmd/**",
-            "internal/**",
-            "pkg/**",
-            "testdata/**",
-            "fixtures/**",
-            "scripts/**",
-            ".golangci*",
-            "Taskfile*",
-            "Makefile"
-          ]
-        }
+    runs-on: ubuntu-latest
+    outputs:
+      changes: ${{ steps.paths.outputs.changes }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - id: paths
+        uses: kellen-miller/ci/.github/actions/changed-paths@9123b953c185a9f2550d88ed89e86dd37d482249
+        with:
+          filters: |
+            {
+              "go": [
+                ".github/workflows/**",
+                ".github/actions/**",
+                "go.mod",
+                "go.sum",
+                "go.work",
+                "go.work.sum",
+                "**/*.go",
+                "cmd/**",
+                "internal/**",
+                "pkg/**",
+                "testdata/**",
+                "fixtures/**",
+                "scripts/**",
+                ".golangci*",
+                "Taskfile*",
+                "Makefile"
+              ],
+              "action": [
+                ".github/workflows/**",
+                ".github/actions/**",
+                "go.mod",
+                "go.sum",
+                "go.work",
+                "go.work.sum",
+                "**/*.go",
+                "cmd/**",
+                "internal/**",
+                "pkg/**",
+                "testdata/**",
+                "fixtures/**",
+                "scripts/**",
+                ".golangci*",
+                "Taskfile*",
+                "Makefile",
+                "action.yml",
+                ".gitignore",
+                ".jscpd.json"
+              ],
+              "detectors": [
+                ".github/workflows/**",
+                ".github/actions/**",
+                "go.mod",
+                "go.sum",
+                "go.work",
+                "go.work.sum",
+                "**/*.go",
+                "cmd/**",
+                "internal/**",
+                "pkg/**",
+                "testdata/**",
+                "fixtures/**",
+                "scripts/**",
+                ".golangci*",
+                "Taskfile*",
+                "Makefile",
+                "action.yml",
+                ".gitignore",
+                ".jscpd.json"
+              ],
+              "typescript": [
+                ".github/workflows/**",
+                ".github/actions/**",
+                "go.mod",
+                "go.sum",
+                "go.work",
+                "go.work.sum",
+                "**/*.go",
+                "cmd/**",
+                "internal/**",
+                "pkg/**",
+                "testdata/**",
+                "fixtures/**",
+                "scripts/**",
+                ".golangci*",
+                "Taskfile*",
+                "Makefile"
+              ]
+            }
 
   go:
     needs: changes
