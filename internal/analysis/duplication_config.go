@@ -11,14 +11,14 @@ import (
 )
 
 type duplicationOptions struct {
-	config           DuplicationConfig
 	settings         map[string]json.RawMessage
+	pattern          string
+	mode             string
 	paths            []string
 	ignores          []string
 	formats          []string
+	config           DuplicationConfig
 	maxBytes         int64
-	pattern          string
-	mode             string
 	respectGitignore bool
 }
 

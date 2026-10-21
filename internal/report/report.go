@@ -190,23 +190,23 @@ type Detail struct {
 }
 
 type DuplicationConfig struct {
-	Formats          []string        `json:"formats,omitempty"`
-	MaxFileBytes     int64           `json:"max_file_bytes,omitempty"`
 	ScopeRoot        string          `json:"scope_root,omitempty"`
-	Paths            []string        `json:"paths,omitempty"`
-	Ignore           []string        `json:"ignore,omitempty"`
 	Pattern          string          `json:"pattern,omitempty"`
 	Mode             string          `json:"mode,omitempty"`
-	Gitignore        bool            `json:"gitignore"`
 	GitignoreDigest  string          `json:"gitignore_digest,omitempty"`
-	DetectorSettings json.RawMessage `json:"detector_settings,omitempty"`
-	EnforceThreshold bool            `json:"enforce_threshold"`
 	Tool             string          `json:"tool,omitempty"`
 	Version          string          `json:"version,omitempty"`
 	Scope            string          `json:"scope,omitempty"`
 	Threshold        string          `json:"threshold,omitempty"`
+	Formats          []string        `json:"formats,omitempty"`
+	Paths            []string        `json:"paths,omitempty"`
+	Ignore           []string        `json:"ignore,omitempty"`
+	DetectorSettings json.RawMessage `json:"detector_settings,omitempty"`
+	MaxFileBytes     int64           `json:"max_file_bytes,omitempty"`
 	MinTokens        int             `json:"min_tokens,omitempty"`
 	MinLines         int             `json:"min_lines,omitempty"`
+	Gitignore        bool            `json:"gitignore"`
+	EnforceThreshold bool            `json:"enforce_threshold"`
 	Requested        bool            `json:"requested"`
 }
 
@@ -226,19 +226,19 @@ const (
 )
 
 type DuplicationPercentage struct {
+	Category      Category `json:"category"`
 	Files         int      `json:"files"`
 	SelectedFiles int      `json:"selected_files"`
-	Category      Category `json:"category"`
 	Percentage    float64  `json:"percentage"`
 }
 
 type Duplication struct {
-	Percentages       []DuplicationPercentage `json:"percentages,omitempty"`
-	ThresholdExceeded bool                    `json:"threshold_exceeded"`
 	Status            DuplicationStatus       `json:"status"`
 	Error             string                  `json:"error,omitempty"`
+	Percentages       []DuplicationPercentage `json:"percentages,omitempty"`
 	Clones            []Clone                 `json:"clones,omitempty"`
 	Config            DuplicationConfig       `json:"config"`
+	ThresholdExceeded bool                    `json:"threshold_exceeded"`
 }
 
 type Clone struct {

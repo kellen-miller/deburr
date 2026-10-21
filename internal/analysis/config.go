@@ -42,12 +42,12 @@ type DuplicationConfig struct {
 	ConfigPath       string
 	Formats          string
 	Mode             string
-	DetectorSettings json.RawMessage
-	EnforceThreshold bool
 	Tool             string
 	Threshold        string
+	DetectorSettings json.RawMessage
 	MinTokens        int
 	MinLines         int
+	EnforceThreshold bool
 	Requested        bool
 }
 

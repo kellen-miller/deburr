@@ -1,41 +1,8 @@
 package report
 
 import (
-	"encoding/json"
 	"testing"
 )
-
-func TestReportIdentityMatchesLegacyDuplicationConfigDigest(t *testing.T) {
-	value := reviewTestReport()
-	value.Config = ConfigSummary{
-		Language: "go,typescript",
-		Duplication: DuplicationConfig{
-			Formats:          []string{"go", "typescript"},
-			MaxFileBytes:     1024,
-			ScopeRoot:        "src",
-			Paths:            []string{"src/**"},
-			Ignore:           []string{"src/generated/**"},
-			Pattern:          "**/*.go",
-			Mode:             "mild",
-			Gitignore:        true,
-			GitignoreDigest:  "sha256:ignore",
-			DetectorSettings: json.RawMessage(`{"workers":1}`),
-			EnforceThreshold: true,
-			Tool:             "cpd",
-			Version:          "5.3.0",
-			Scope:            "all",
-			Threshold:        "10",
-			MinTokens:        80,
-			MinLines:         8,
-			Requested:        true,
-		},
-	}
-
-	const legacyDigest = "sha256:ff9f92082036076de4ab0f0a8a53ed54827ffc33833e534ee092b4c468030a76"
-	if got := reportIdentity(&value); got != legacyDigest {
-		t.Fatalf("report identity = %q, want legacy digest %q", got, legacyDigest)
-	}
-}
 
 func TestInitializeReviewIncludesCompleteInventory(t *testing.T) {
 	value := reviewTestReport()

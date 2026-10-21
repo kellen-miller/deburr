@@ -43,20 +43,21 @@ func (e *AnalysisError) Error() string {
 }
 
 type sourceFile struct {
-	source      []byte
+	fileSet     *token.FileSet
+	astFile     *ast.File
 	path        string
 	category    report.Category
 	status      report.FileStatus
 	reason      string
 	err         string
-	fileSet     *token.FileSet
-	astFile     *ast.File
+	source      []byte
 	lineCode    []bool
-	bytes       int64
-	lines       int
-	codeLines   int
 	tsFunctions []report.Function
 	tsTokens    []typescriptSourceToken
+
+	bytes     int64
+	lines     int
+	codeLines int
 }
 
 type analysisState struct {
