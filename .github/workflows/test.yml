@@ -21,7 +21,7 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
       - id: paths
-        uses: kellen-miller/ci/.github/actions/changed-paths@c7d3bb1cf4ddd49dc3fd32a8739449960f6b7416
+        uses: kellen-miller/ci/.github/actions/changed-paths@2af77688327c2fc0f164e91f77e8784ef25e14c6
         with:
           filters: |
             {
@@ -114,7 +114,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - uses: kellen-miller/ci/.github/actions/go-lint@c7d3bb1cf4ddd49dc3fd32a8739449960f6b7416
+      - uses: kellen-miller/ci/.github/actions/go-lint@2af77688327c2fc0f164e91f77e8784ef25e14c6
         with:
           go-version-file: go.mod
           govulncheck-version: v1.9.0
@@ -130,7 +130,7 @@ jobs:
           - ubuntu-latest
           - macos-latest
           - windows-latest
-    uses: kellen-miller/ci/.github/workflows/go-test.yaml@c7d3bb1cf4ddd49dc3fd32a8739449960f6b7416
+    uses: kellen-miller/ci/.github/workflows/go-test.yaml@2af77688327c2fc0f164e91f77e8784ef25e14c6
     with:
       runner: ${{ matrix.os }}
       go-version-file: go.mod
