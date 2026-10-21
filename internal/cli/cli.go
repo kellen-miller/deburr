@@ -161,10 +161,14 @@ func runAudit(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 	}
 
 	value, analysisErr := analysis.Analyze(ctx, target, options.config, progress)
-	_, _ = fmt.Fprintln(progress, "deburr: collecting source provenance")
+	if _, err := fmt.Fprintln(progress, "deburr: collecting source provenance"); err != nil {
+		progress = io.Discard
+	}
 	applyProvenance(&value, target)
 	report.InitializeReview(&value)
-	_, _ = fmt.Fprintf(progress, "deburr: writing %s report\n", options.format)
+	if _, err := fmt.Fprintf(progress, "deburr: writing %s report\n", options.format); err != nil {
+		progress = io.Discard
+	}
 	if err := writeAuditReport(&value, target, &options, stdout); err != nil {
 		return exitWithError(stderr, exitFailure, err)
 	}
@@ -173,7 +177,9 @@ func runAudit(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 		return exitWithError(stderr, exitFailure, analysisErr)
 	}
 
-	_, _ = fmt.Fprintln(progress, "deburr: audit complete")
+	if _, err := fmt.Fprintln(progress, "deburr: audit complete"); err != nil {
+		return exitFailure
+	}
 	return exitSuccess
 }
 

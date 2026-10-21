@@ -70,6 +70,13 @@ type ReviewItem struct {
 	IdentityAmbiguous bool            `json:"identity_ambiguous"`
 }
 
+type reviewIdentity struct {
+	Analyzer      AnalyzerIdentity `json:"analyzer"`
+	SchemaVersion string           `json:"schema_version"`
+	Scope         Scope            `json:"scope"`
+	Config        ConfigSummary    `json:"config"`
+}
+
 // InitializeReview creates the complete review inventory and attaches it to
 // value. It includes every finding, high-complexity function, and clone.
 func InitializeReview(value *Report) ReviewLedger {
@@ -105,13 +112,14 @@ func ApplyReview(value *Report, ledger *ReviewLedger) error {
 		return err
 	}
 
-	if err := applyReviewDecisions(
+	decisionErr := applyReviewDecisions(
 		current,
 		currentByID,
 		ledger,
 		value.Provenance.Source.ManifestDigest,
-	); err != nil {
-		return err
+	)
+	if decisionErr != nil {
+		return decisionErr
 	}
 
 	result := ReviewLedger{
@@ -198,7 +206,7 @@ func applyReviewDecisions(
 	sort.SliceStable(decisions, func(left, right int) bool {
 		return decisions[left].ID < decisions[right].ID
 	})
-	seen := make(map[string]struct{}, len(decisions))
+	seen := make(map[string]bool, len(decisions))
 	for index := range decisions {
 		decision := &decisions[index]
 		currentIndex, err := validateReviewItemBinding(decision, current, currentByID, seen)
@@ -223,7 +231,7 @@ func validateReviewItemBinding(
 	decision *ReviewItem,
 	current []ReviewItem,
 	currentByID map[string]int,
-	seen map[string]struct{},
+	seen map[string]bool,
 ) (int, error) {
 	if decision.ID == "" {
 		return 0, errors.New("review item id is required")
@@ -232,7 +240,7 @@ func validateReviewItemBinding(
 	if _, exists := seen[decision.ID]; exists {
 		return 0, fmt.Errorf("review ledger contains duplicate id %q", decision.ID)
 	}
-	seen[decision.ID] = struct{}{}
+	seen[decision.ID] = true
 
 	currentIndex, exists := currentByID[decision.ID]
 	if !exists {
@@ -425,12 +433,7 @@ func previousDecision(item *ReviewItem) *ReviewDecision {
 }
 
 func reportIdentity(value *Report) string {
-	identity, err := json.Marshal(struct {
-		Analyzer      AnalyzerIdentity `json:"analyzer"`
-		SchemaVersion string           `json:"schema_version"`
-		Scope         Scope            `json:"scope"`
-		Config        ConfigSummary    `json:"config"`
-	}{
+	identity, err := json.Marshal(reviewIdentity{
 		Analyzer:      value.Analyzer,
 		SchemaVersion: value.SchemaVersion,
 		Scope:         value.Scope,

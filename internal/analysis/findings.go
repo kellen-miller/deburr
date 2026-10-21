@@ -60,25 +60,25 @@ func redundantBooleanFindings(file *sourceFile, function *functionNode) []report
 			findings = append(findings, report.Finding{
 				ID: stableFindingID(
 					file.path,
-					"redundant-boolean-return",
+					ruleRedundantBooleanReturn,
 					functionIdentityName(function),
 					content,
 					occurrence,
 				),
 				Fingerprint:       findingFingerprint(function, content),
-				Rule:              "redundant-boolean-return",
+				Rule:              ruleRedundantBooleanReturn,
 				Path:              file.path,
 				Start:             start,
 				End:               end,
-				Severity:          "review",
+				Severity:          findingSeverityReview,
 				Message:           "boolean branches return opposite literals; review replacing them with the condition or its negation",
 				IdentityAmbiguous: function.ambiguous,
 				Details: []report.Detail{
-					{Key: "owner", Value: function.name},
+					{Key: findingDetailOwner, Value: function.name},
 					{Key: "condition", Value: normalizedNodeText(file, conditional.Cond)},
 					{Key: "then_return", Value: strconv.FormatBool(thenValue)},
 					{Key: "else_return", Value: strconv.FormatBool(followingValue)},
-					{Key: "candidate_only", Value: findingCandidateValue},
+					{Key: findingDetailCandidateOnly, Value: findingCandidateValue},
 				},
 			})
 		}
@@ -111,22 +111,22 @@ func duplicateBranchFindings(file *sourceFile, function *functionNode) []report.
 		findings = append(findings, report.Finding{
 			ID: stableFindingID(
 				file.path,
-				"duplicate-branches",
+				ruleDuplicateBranches,
 				functionIdentityName(function),
 				content,
 				occurrence,
 			),
 			Fingerprint:       findingFingerprint(function, content),
-			Rule:              "duplicate-branches",
+			Rule:              ruleDuplicateBranches,
 			Path:              file.path,
 			Start:             start,
 			End:               end,
-			Severity:          "review",
+			Severity:          findingSeverityReview,
 			Message:           "if branches have identical syntax; review whether the condition and branch effects can be simplified",
 			IdentityAmbiguous: function.ambiguous,
 			Details: []report.Detail{
-				{Key: "owner", Value: function.name},
-				{Key: "candidate_only", Value: findingCandidateValue},
+				{Key: findingDetailOwner, Value: function.name},
+				{Key: findingDetailCandidateOnly, Value: findingCandidateValue},
 				{Key: "preserve_condition", Value: findingCandidateValue},
 			},
 		})
@@ -155,7 +155,7 @@ func booleanLiteral(expr ast.Expr) (bool, bool) {
 		return false, false
 	}
 
-	if ident.Name == "true" {
+	if ident.Name == findingCandidateValue {
 		return true, true
 	}
 

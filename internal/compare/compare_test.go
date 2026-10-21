@@ -405,11 +405,13 @@ func sampleReport() report.Report {
 	}
 }
 
+type duplicationConfigMutation struct {
+	name  string
+	apply func(*report.DuplicationConfig)
+}
+
 func TestDuplicationEffectiveConfigurationChanges(t *testing.T) {
-	for _, change := range []struct {
-		name  string
-		apply func(*report.DuplicationConfig)
-	}{
+	for _, change := range []duplicationConfigMutation{
 		{"ignore", func(config *report.DuplicationConfig) { config.Ignore = []string{"**/fixture.ts"} }},
 		{"gitignore", func(config *report.DuplicationConfig) { config.GitignoreDigest = "changed" }},
 		{"root", func(config *report.DuplicationConfig) { config.ScopeRoot = ".." }},
@@ -438,10 +440,7 @@ func TestDuplicationEffectiveConfigurationChanges(t *testing.T) {
 }
 
 func TestCompareDuplicationPolicyChangesPreserveMeasurements(t *testing.T) {
-	for _, change := range []struct {
-		name  string
-		apply func(*report.DuplicationConfig)
-	}{
+	for _, change := range []duplicationConfigMutation{
 		{"enforcement", func(config *report.DuplicationConfig) { config.EnforceThreshold = true }},
 		{"threshold", func(config *report.DuplicationConfig) { config.Threshold = "2" }},
 	} {
@@ -452,7 +451,9 @@ func TestCompareDuplicationPolicyChangesPreserveMeasurements(t *testing.T) {
 			change.apply(&after.Duplication.Config)
 			before.Config.Duplication = before.Duplication.Config
 			after.Config.Duplication = after.Duplication.Config
-			before.Duplication.Percentages = []report.DuplicationPercentage{{Category: report.CategoryProduction, Files: 2, Percentage: 3}}
+			before.Duplication.Percentages = []report.DuplicationPercentage{
+				{Category: report.CategoryProduction, Files: 2, Percentage: 3},
+			}
 			after.Duplication.Percentages = before.Duplication.Percentages
 			after.Duplication.ThresholdExceeded = after.Duplication.Config.Threshold == "2"
 

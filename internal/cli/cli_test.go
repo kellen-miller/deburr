@@ -571,22 +571,40 @@ func TestRunAuditQuietPreservesReportAndErrors(t *testing.T) {
 	stdout.Reset()
 	stderr.Reset()
 	code = Run(t.Context(), []string{"audit", root, "--quiet", "--format", "json"}, &stdout, &stderr)
-	if code == 0 || !strings.Contains(stderr.String(), "analysis failed") || strings.Contains(stderr.String(), "scanning") || json.Unmarshal(stdout.Bytes(), &value) != nil || value.Coverage.ParseErrors != 1 {
-		t.Fatalf("quiet hid failure or partial report: exit=%d, stderr=%q, stdout=%s", code, stderr.String(), stdout.String())
+	if code == 0 || !strings.Contains(stderr.String(), "analysis failed") ||
+		strings.Contains(stderr.String(), "scanning") ||
+		json.Unmarshal(stdout.Bytes(), &value) != nil ||
+		value.Coverage.ParseErrors != 1 {
+		t.Fatalf(
+			"quiet hid failure or partial report: exit=%d, stderr=%q, stdout=%s",
+			code,
+			stderr.String(),
+			stdout.String(),
+		)
 	}
 }
 
 func TestRunAuditProgressCountsAndFileOutput(t *testing.T) {
 	root := t.TempDir()
-	for index := 0; index < 101; index++ {
-		writeFile(t, filepath.Join(root, fmt.Sprintf("source%03d.ts", index)), "export function value() { return 42; }\n")
+	for index := range 101 {
+		writeFile(
+			t,
+			filepath.Join(root, fmt.Sprintf("source%03d.ts", index)),
+			"export function value() { return 42; }\n",
+		)
 	}
 
 	output := filepath.Join(t.TempDir(), "report.json")
 	var stdout, stderr bytes.Buffer
 	code := Run(t.Context(), []string{"audit", root, "--format", "json", "--output", output}, &stdout, &stderr)
-	if code != 0 || stdout.Len() != 0 || !strings.Contains(stderr.String(), "scanned 100 files (100 analyzed") || !strings.Contains(stderr.String(), "scan finished: 101 files, 101 analyzed") {
-		t.Fatalf("progress counts/output incorrect: exit=%d, stdout=%q, stderr=%s", code, stdout.String(), stderr.String())
+	if code != 0 || stdout.Len() != 0 || !strings.Contains(stderr.String(), "scanned 100 files (100 analyzed") ||
+		!strings.Contains(stderr.String(), "scan finished: 101 files, 101 analyzed") {
+		t.Fatalf(
+			"progress counts/output incorrect: exit=%d, stdout=%q, stderr=%s",
+			code,
+			stdout.String(),
+			stderr.String(),
+		)
 	}
 
 	data, err := os.ReadFile(output)

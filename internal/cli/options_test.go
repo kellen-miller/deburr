@@ -94,7 +94,8 @@ func TestParseOptionsAcceptsExplicitDuplicationTool(t *testing.T) {
 
 func TestJSCPDOption(t *testing.T) {
 	options, paths, err := parseOptions([]string{"repo", "--jscpd", "/tools/jscpd"}, true)
-	if err != nil || len(paths) != 1 || !options.config.Duplication.Requested || options.config.Duplication.Tool != "/tools/jscpd" {
+	if err != nil || len(paths) != 1 || !options.config.Duplication.Requested ||
+		options.config.Duplication.Tool != "/tools/jscpd" {
 		t.Fatalf("options %+v, paths %v, error %v", options, paths, err)
 	}
 
@@ -113,8 +114,13 @@ func TestJSCPDOption(t *testing.T) {
 }
 
 func TestDuplicationConfigurationOptions(t *testing.T) {
-	options, paths, err := parseOptions([]string{"repo", "--duplicates-config", "config.json", "--enforce-duplicates-threshold"}, true)
-	if err != nil || len(paths) != 1 || !options.config.Duplication.Requested || !options.config.Duplication.EnforceThreshold || options.config.Duplication.ConfigPath != "config.json" {
+	options, paths, err := parseOptions(
+		[]string{"repo", "--duplicates-config", "config.json", "--enforce-duplicates-threshold"},
+		true,
+	)
+	if err != nil || len(paths) != 1 || !options.config.Duplication.Requested ||
+		!options.config.Duplication.EnforceThreshold ||
+		options.config.Duplication.ConfigPath != "config.json" {
 		t.Fatalf("options %+v, paths %v, error %v", options, paths, err)
 	}
 

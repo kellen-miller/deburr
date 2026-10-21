@@ -10,12 +10,18 @@ const (
 	AnalyzerID      = "deburr/native"
 	AnalyzerVersion = "0.3.0"
 
-	highComplexityThreshold = 10
-	duplicationTool         = "cpd"
-	duplicationToolMajor    = "5"
-	duplicationMinTokens    = 80
-	duplicationMinLines     = 8
-	duplicationThreshold    = "100"
+	highComplexityThreshold    = 10
+	duplicationTool            = "cpd"
+	duplicationToolMajor       = "5"
+	duplicationMinTokens       = 80
+	duplicationMinLines        = 8
+	duplicationThreshold       = "100"
+	ruleRedundantBooleanReturn = "redundant-boolean-return"
+	ruleDuplicateBranches      = "duplicate-branches"
+	findingSeverityReview      = "review"
+	findingDetailOwner         = "owner"
+	findingDetailCandidateOnly = "candidate_only"
+	languageTypeScript         = "typescript"
 )
 
 // Config controls Go and TypeScript discovery and metrics. The zero value
@@ -36,12 +42,12 @@ type DuplicationConfig struct {
 	ConfigPath       string
 	Formats          string
 	Mode             string
-	DetectorSettings json.RawMessage
-	EnforceThreshold bool
 	Tool             string
 	Threshold        string
+	DetectorSettings json.RawMessage
 	MinTokens        int
 	MinLines         int
+	EnforceThreshold bool
 	Requested        bool
 }
 
@@ -76,7 +82,7 @@ func (c Config) reportSummary() report.ConfigSummary {
 	}
 
 	return report.ConfigSummary{
-		Language:                "go,typescript",
+		Language:                "go," + languageTypeScript,
 		IncludeTests:            !c.ExcludeTests,
 		IncludeTestdata:         c.IncludeTestdata,
 		IncludeVendor:           c.IncludeVendor,
@@ -84,8 +90,8 @@ func (c Config) reportSummary() report.ConfigSummary {
 		MaxFileBytes:            c.MaxFileBytes,
 		HighComplexityThreshold: highComplexityThreshold,
 		Rules: []report.RuleConfig{
-			{ID: "redundant-boolean-return", Enabled: true},
-			{ID: "duplicate-branches", Enabled: true},
+			{ID: ruleRedundantBooleanReturn, Enabled: true},
+			{ID: ruleDuplicateBranches, Enabled: true},
 		},
 		Duplication: report.DuplicationConfig{
 			Requested: c.Duplication.Requested,
@@ -100,7 +106,7 @@ func (c Config) reportSummary() report.ConfigSummary {
 
 func (c Config) reportScope() report.Scope {
 	return report.Scope{
-		Languages:        []string{"go", "typescript"},
+		Languages:        []string{"go", languageTypeScript},
 		PathMode:         "source-relative",
 		IncludeTests:     !c.ExcludeTests,
 		IncludeTestdata:  c.IncludeTestdata,

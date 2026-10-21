@@ -331,7 +331,8 @@ func Production(value int) int {
 		}
 		value = 10
 	}
-	result := struct{ Value int }{Value: value}
+	type resultValue struct { Value int }
+	result := resultValue{Value: value}
 	return result.Value
 }
 
@@ -532,7 +533,8 @@ func TestAnalyzeDuplicationAdapterReportsNormalizedClones(t *testing.T) {
 	}
 
 	versionOutput, err := exec.Command(tool, "--version").CombinedOutput()
-	if err != nil || !strings.HasPrefix(semanticVersionPattern.FindString(string(versionOutput)), duplicationToolMajor+".") {
+	if err != nil ||
+		!strings.HasPrefix(semanticVersionPattern.FindString(string(versionOutput)), duplicationToolMajor+".") {
 		t.Skipf("supported cpd %s unavailable: %s", duplicationToolMajor, versionOutput)
 	}
 
@@ -647,7 +649,7 @@ func Two() int {
 			Tokens: 4,
 			Lines:  1,
 		},
-	}, report.CategoryProduction, "/tmp/left", map[string][]byte{
+	}, "/tmp/left", map[string][]byte{
 		"one.go": leftSource,
 		"two.go": leftSource,
 	})
@@ -666,7 +668,7 @@ func Two() int {
 			Tokens: 4,
 			Lines:  1,
 		},
-	}, report.CategoryProduction, "/tmp/right", map[string][]byte{
+	}, "/tmp/right", map[string][]byte{
 		"one.go": rightSource,
 		"two.go": rightSource,
 	})
@@ -721,7 +723,6 @@ func Two() int {
 
 	clones, err := normalizeTestCPDClones(t,
 		duplicates,
-		report.CategoryProduction,
 		"/tmp/snapshot",
 		map[string][]byte{
 			"one.go": source,
@@ -752,7 +753,7 @@ func Two() int {
 			Tokens: 4,
 			Lines:  1,
 		},
-	}, report.CategoryProduction, "/tmp/snapshot", map[string][]byte{
+	}, "/tmp/snapshot", map[string][]byte{
 		"one.go": []byte(`package sample
 
 func One() int {
@@ -829,7 +830,6 @@ return 2
 
 	clones, err := normalizeTestCPDClones(t,
 		duplicates,
-		report.CategoryProduction,
 		"/tmp/snapshot",
 		map[string][]byte{"sample.go": source},
 	)
@@ -855,7 +855,6 @@ return 2
 }
 
 func TestAnalyzeDuplicationVersionMismatchIsIncomplete(t *testing.T) {
-
 	root := t.TempDir()
 	writeTestFile(t, root, "sample.go", "package sample\nfunc Main() {}\n")
 	cfg := DefaultConfig()

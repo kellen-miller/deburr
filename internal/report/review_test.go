@@ -1,6 +1,8 @@
 package report
 
-import "testing"
+import (
+	"testing"
+)
 
 func TestInitializeReviewIncludesCompleteInventory(t *testing.T) {
 	value := reviewTestReport()
@@ -18,7 +20,11 @@ func TestInitializeReviewIncludesCompleteInventory(t *testing.T) {
 		t.Fatalf("review counts = %+v", ledger.Counts)
 	}
 
-	kinds := map[ReviewItemKind]int{}
+	kinds := map[ReviewItemKind]int{
+		ReviewFinding:  0,
+		ReviewFunction: 0,
+		ReviewClone:    0,
+	}
 	for index := range ledger.Items {
 		item := ledger.Items[index]
 		kinds[item.Kind]++
@@ -257,11 +263,13 @@ func TestInitializeReviewPropagatesIdentityAmbiguity(t *testing.T) {
 	}
 }
 
+type reviewMutationCase struct {
+	mutate func(*ReviewLedger)
+	name   string
+}
+
 func TestApplyReviewRejectsUnknownDuplicateAndInvalidDecisions(t *testing.T) {
-	tests := []struct {
-		mutate func(*ReviewLedger)
-		name   string
-	}{
+	tests := []reviewMutationCase{
 		{
 			name: "unknown",
 			mutate: func(ledger *ReviewLedger) {
