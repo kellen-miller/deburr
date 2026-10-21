@@ -2,7 +2,6 @@ package analysis
 
 import (
 	"context"
-	"crypto/sha256"
 	"fmt"
 	"go/ast"
 	"go/parser"
@@ -11,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 
 	"github.com/kellen-miller/deburr/internal/report"
@@ -104,9 +102,9 @@ func Analyze(ctx context.Context, root string, cfg Config, progress io.Writer) (
 		return result, fmt.Errorf("stat input: %w", err)
 	}
 
-	// Progress is best effort and separate from the report's output stream.
-	_, _ = fmt.Fprintln(progress, "deburr: scanning Go and TypeScript source")
 	state := &analysisState{root: input, cfg: cfg, report: result, progress: progress}
+	// Progress is best effort and separate from the report's output stream.
+	state.writeProgressf("deburr: scanning Go and TypeScript source\n")
 	if info.Mode()&os.ModeSymlink != 0 {
 		state.base = filepath.Dir(input)
 		state.visitSymlink(filepath.Base(input), info)
@@ -126,10 +124,10 @@ func Analyze(ctx context.Context, root string, cfg Config, progress io.Writer) (
 		})
 	}
 
-	_, _ = fmt.Fprintf(progress, "deburr: scan finished: %d files, %d analyzed, %d errors\n",
+	state.writeProgressf("deburr: scan finished: %d files, %d analyzed, %d errors\n",
 		state.report.Coverage.Discovered, state.report.Coverage.Analyzed,
 		state.report.Coverage.ReadErrors+state.report.Coverage.ParseErrors)
-	_, _ = fmt.Fprintln(progress, "deburr: summarizing metrics")
+	state.writeProgressf("deburr: summarizing metrics\n")
 	state.finish()
 	if cfg.Duplication.Requested {
 		duplication, duplicationErr := runDuplication(ctx, state)
@@ -144,6 +142,12 @@ func Analyze(ctx context.Context, root string, cfg Config, progress io.Writer) (
 	}
 
 	return state.report, nil
+}
+
+func (s *analysisState) writeProgressf(format string, args ...any) {
+	if _, err := fmt.Fprintf(s.progress, format, args...); err != nil {
+		s.progress = io.Discard
+	}
 }
 
 func duplicationResult(cfg Config) *report.Duplication {
@@ -327,21 +331,36 @@ func (s *analysisState) discoverFile(path, rel string, entry os.DirEntry) *sourc
 		lineCode:  lineCode,
 	}
 
-	if category == report.CategoryVendor && !s.cfg.IncludeVendor {
+	if reason := excludedCategoryReason(category, s.cfg); reason != "" {
 		file.status = report.FileExcluded
-		file.reason = "vendor excluded by configuration"
-	} else if category == report.CategoryGenerated && !s.cfg.IncludeGenerated {
-		file.status = report.FileExcluded
-		file.reason = "generated excluded by configuration"
-	} else if category == report.CategoryTest && s.cfg.ExcludeTests {
-		file.status = report.FileExcluded
-		file.reason = "tests excluded by configuration"
-	} else if category == report.CategoryTestdata && !s.cfg.IncludeTestdata {
-		file.status = report.FileExcluded
-		file.reason = "testdata excluded by configuration"
+		file.reason = reason
 	}
 
 	return file
+}
+
+func excludedCategoryReason(category report.Category, config Config) string {
+	switch category {
+	case report.CategoryVendor:
+		if !config.IncludeVendor {
+			return "vendor excluded by configuration"
+		}
+	case report.CategoryGenerated:
+		if !config.IncludeGenerated {
+			return "generated excluded by configuration"
+		}
+	case report.CategoryTest:
+		if config.ExcludeTests {
+			return "tests excluded by configuration"
+		}
+	case report.CategoryTestdata:
+		if !config.IncludeTestdata {
+			return "testdata excluded by configuration"
+		}
+	case report.CategoryProduction, report.CategoryUnsupported:
+	}
+
+	return ""
 }
 
 func (s *analysisState) parseFile(file *sourceFile) {
@@ -429,9 +448,14 @@ func (s *analysisState) recordFile(file *sourceFile) {
 	}
 
 	if s.report.Coverage.Discovered == 1 || s.report.Coverage.Discovered%100 == 0 {
-		_, _ = fmt.Fprintf(s.progress, "deburr: scanned %d files (%d analyzed, %d excluded, %d unsupported, %d errors)\n",
-			s.report.Coverage.Discovered, s.report.Coverage.Analyzed, s.report.Coverage.Excluded,
-			s.report.Coverage.Unsupported, s.report.Coverage.ReadErrors+s.report.Coverage.ParseErrors)
+		s.writeProgressf(
+			"deburr: scanned %d files (%d analyzed, %d excluded, %d unsupported, %d errors)\n",
+			s.report.Coverage.Discovered,
+			s.report.Coverage.Analyzed,
+			s.report.Coverage.Excluded,
+			s.report.Coverage.Unsupported,
+			s.report.Coverage.ReadErrors+s.report.Coverage.ParseErrors,
+		)
 	}
 }
 
@@ -485,150 +509,4 @@ func (s *analysisState) finish() {
 	})
 	s.report.Findings = append([]report.Finding(nil), s.findings...)
 	s.report.Metrics = calculateMetrics(s.report.Files, s.report.Functions)
-}
-
-func sourceManifestDigest(files []*sourceFile) string {
-	ordered := append([]*sourceFile(nil), files...)
-	sort.SliceStable(ordered, func(left, right int) bool {
-		return ordered[left].path < ordered[right].path
-	})
-
-	hash := sha256.New()
-	for _, file := range ordered {
-		path := slashPath(file.path)
-		frame := strconv.Itoa(len(path)) + ":" + path + ":" + strconv.Itoa(len(file.source)) + ":"
-		_, _ = hash.Write([]byte(frame))
-		_, _ = hash.Write(file.source)
-		_, _ = hash.Write([]byte{'\x00'})
-	}
-
-	return fmt.Sprintf("sha256:%x", hash.Sum(nil))
-}
-
-func buildFileReports(files []*sourceFile) ([]report.File, []report.CategoryCoverage) {
-	reports := make([]report.File, 0, len(files))
-	categoryCounts := make(map[report.Category]*report.CategoryCoverage, len(coverageCategories()))
-	for _, category := range coverageCategories() {
-		categoryCounts[category] = &report.CategoryCoverage{Category: category}
-	}
-
-	for index := range files {
-		file := files[index]
-		reports = append(reports, report.File{
-			Path:      file.path,
-			Category:  file.category,
-			Status:    file.status,
-			Bytes:     file.bytes,
-			Lines:     file.lines,
-			CodeLines: file.codeLines,
-			Reason:    file.reason,
-			Error:     file.err,
-		})
-
-		category := file.category
-		if category == "" {
-			category = report.CategoryUnsupported
-		}
-
-		counts := categoryCounts[category]
-		if counts == nil {
-			counts = &report.CategoryCoverage{Category: category}
-			categoryCounts[category] = counts
-		}
-
-		countFileCategory(counts, file.status)
-	}
-
-	byCategory := make([]report.CategoryCoverage, 0, len(categoryCounts))
-	for _, category := range coverageCategories() {
-		byCategory = append(byCategory, *categoryCounts[category])
-	}
-
-	return reports, byCategory
-}
-
-func coverageCategories() []report.Category {
-	return []report.Category{
-		report.CategoryProduction,
-		report.CategoryTest,
-		report.CategoryTestdata,
-		report.CategoryGenerated,
-		report.CategoryVendor,
-		report.CategoryUnsupported,
-	}
-}
-
-func countFileCategory(counts *report.CategoryCoverage, status report.FileStatus) {
-	counts.Discovered++
-	switch status {
-	case report.FileAnalyzed:
-		counts.Analyzed++
-	case report.FileExcluded:
-		counts.Excluded++
-	case report.FileUnsupported:
-		counts.Unsupported++
-	case report.FileReadError:
-		counts.ReadErrors++
-	case report.FileParseError:
-		counts.ParseErrors++
-	}
-}
-
-func calculateMetrics(files []report.File, functions []report.Function) report.Metrics {
-	metrics := report.Metrics{}
-	for _, file := range files {
-		switch file.Status {
-		case report.FileAnalyzed:
-			metrics.All.CodeLines += file.CodeLines
-		default:
-			continue
-		}
-
-		switch file.Category {
-		case report.CategoryProduction:
-			metrics.Production.CodeLines += file.CodeLines
-		case report.CategoryTest:
-			metrics.Test.CodeLines += file.CodeLines
-		default:
-			continue
-		}
-	}
-
-	for index := range functions {
-		function := &functions[index]
-		addFunctionMetric(&metrics.All, function)
-		switch function.Category {
-		case report.CategoryProduction:
-			addFunctionMetric(&metrics.Production, function)
-		case report.CategoryTest:
-			addFunctionMetric(&metrics.Test, function)
-		case report.CategoryTestdata, report.CategoryGenerated, report.CategoryVendor, report.CategoryUnsupported:
-		}
-	}
-
-	setMassShare(&metrics.All)
-	setMassShare(&metrics.Production)
-	setMassShare(&metrics.Test)
-	return metrics
-}
-
-func addFunctionMetric(bucket *report.MetricBucket, function *report.Function) {
-	bucket.Functions++
-	bucket.Cyclomatic += function.Cyclomatic
-	bucket.MaxNesting = max(bucket.MaxNesting, function.MaxNesting)
-	bucket.Mass += function.Mass
-	if function.HighComplexity {
-		bucket.HighComplexityFunctions++
-		bucket.HighComplexityMass += function.Mass
-	}
-}
-
-func setMassShare(bucket *report.MetricBucket) {
-	if bucket.Mass == 0 {
-		bucket.HighComplexityMassShare = nil
-		return
-	}
-
-	share := bucket.HighComplexityMass / bucket.Mass
-	bucket.HighComplexityMassShare = &share
 }

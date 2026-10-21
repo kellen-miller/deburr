@@ -386,11 +386,10 @@ func TestComparisonRenderersShowTypedInventoryReviewAndProvenance(t *testing.T) 
 }
 
 func TestDecodeRejectsInvalidSchemaAndUnknownFields(t *testing.T) {
-	if _, err := DecodeJSON(
-		[]byte(
-			`{"schema_version":"1","analyzer":{"id":"x","version":"1"},"config":{"language":"go"},"scope":{"languages":["go"]},"unexpected":true}`,
-		),
-	); err == nil {
+	_, err := DecodeJSON([]byte(
+		`{"schema_version":"1","analyzer":{"id":"x","version":"1"},"config":{"language":"go"},"scope":{"languages":["go"]},"unexpected":true}`,
+	))
+	if err == nil {
 		t.Fatal("unknown field was accepted")
 	}
 
@@ -474,7 +473,9 @@ func TestDuplicationThresholdEvidenceInReports(t *testing.T) {
 	value.Duplication.Config.EnforceThreshold = true
 	value.Duplication.Config.Threshold = "5"
 	value.Duplication.ThresholdExceeded = true
-	value.Duplication.Percentages = []report.DuplicationPercentage{{Category: report.CategoryProduction, Percentage: 75, Files: 2, SelectedFiles: 3}}
+	value.Duplication.Percentages = []report.DuplicationPercentage{
+		{Category: report.CategoryProduction, Percentage: 75, Files: 2, SelectedFiles: 3},
+	}
 	for _, format := range []Format{FormatText, FormatHTML, FormatGitHub} {
 		var output bytes.Buffer
 		if err := Write(&output, &value, format); err != nil {
@@ -485,7 +486,8 @@ func TestDuplicationThresholdEvidenceInReports(t *testing.T) {
 			t.Fatalf("%s lost measured percentage: %s", format, output.String())
 		}
 
-		if format == FormatGitHub && !strings.Contains(output.String(), "::error title=deburr duplication::duplication exceeds") {
+		if format == FormatGitHub &&
+			!strings.Contains(output.String(), "::error title=deburr duplication::duplication exceeds") {
 			t.Fatal("enforced threshold failure lost GitHub annotation")
 		}
 	}

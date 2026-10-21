@@ -9,6 +9,8 @@ import (
 	"github.com/kellen-miller/deburr/internal/report"
 )
 
+const typeScriptReactExtension = ".tsx"
+
 func (s *analysisState) relative(path string) string {
 	rel, err := filepath.Rel(s.base, path)
 	if err != nil {
@@ -83,7 +85,7 @@ func cleanError(err error) string {
 
 func isTypeScriptPath(path string) bool {
 	switch filepath.Ext(path) {
-	case ".ts", ".tsx", ".mts", ".cts":
+	case ".ts", typeScriptReactExtension, ".mts", ".cts":
 		return true
 	default:
 		return false

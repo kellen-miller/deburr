@@ -114,7 +114,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - uses: kellen-miller/ci/.github/actions/go-lint@9478f2f23f217048a86cb1916fb78b312f20afa7
+      - uses: kellen-miller/ci/.github/actions/go-lint@d5df2e2c61a40744e456bf53e5e44f17dad258e8
         with:
           go-version-file: go.mod
 

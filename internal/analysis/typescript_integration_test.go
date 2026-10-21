@@ -51,11 +51,18 @@ func TestVSCodeTypeScriptIntegration(t *testing.T) {
 	}
 
 	if result.Coverage.Analyzed != 10038 || len(result.Functions) != 269947 {
-		t.Fatalf("pinned corpus coverage changed: analyzed=%d functions=%d", result.Coverage.Analyzed, len(result.Functions))
+		t.Fatalf(
+			"pinned corpus coverage changed: analyzed=%d functions=%d",
+			result.Coverage.Analyzed,
+			len(result.Functions),
+		)
 	}
 
 	for _, function := range result.Functions {
-		if !isTypeScriptPath(function.Path) || function.Start.Line < 1 || function.End.Line < function.Start.Line || function.SLOC < 0 || function.Cyclomatic < 1 || function.Fingerprint == "" {
+		if !isTypeScriptPath(function.Path) || function.Start.Line < 1 || function.End.Line < function.Start.Line ||
+			function.SLOC < 0 ||
+			function.Cyclomatic < 1 ||
+			function.Fingerprint == "" {
 			t.Fatalf("invalid measurement in corpus: %+v", function)
 		}
 
@@ -64,5 +71,10 @@ func TestVSCodeTypeScriptIntegration(t *testing.T) {
 		}
 	}
 
-	t.Logf("VS Code: %d files analyzed, %d functions, %d known upstream parse failures (not a clean parse)", result.Coverage.Analyzed, len(result.Functions), result.Coverage.ParseErrors)
+	t.Logf(
+		"VS Code: %d files analyzed, %d functions, %d known upstream parse failures (not a clean parse)",
+		result.Coverage.Analyzed,
+		len(result.Functions),
+		result.Coverage.ParseErrors,
+	)
 }

@@ -3,7 +3,6 @@ package analysis
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -15,15 +14,26 @@ import (
 
 // Re-execute the test binary as a portable caller-provided detector.
 func TestMain(m *testing.M) {
-	if version := os.Getenv("DEBURR_TEST_TOOL_VERSION"); version != "" && len(os.Args) > 1 && strings.HasPrefix(os.Args[1], "--") {
-		if os.Args[1] == "--version" {
-			fmt.Println("jscpd " + version)
-			os.Exit(0)
+	version := os.Getenv("DEBURR_TEST_TOOL_VERSION")
+	if version == "" || len(os.Args) <= 1 || !strings.HasPrefix(os.Args[1], "--") {
+		os.Exit(m.Run())
+	}
+
+	switch os.Args[1] {
+	case "--version":
+		if _, err := os.Stdout.WriteString("jscpd " + version + "\n"); err != nil {
+			os.Exit(2)
 		}
 
+		os.Exit(0)
+	default:
 		for index, arg := range os.Args {
 			if arg == "--output" && index+1 < len(os.Args) {
-				err := os.WriteFile(filepath.Join(os.Args[index+1], "report.json"), []byte(`{"duplicates":[],"statistics":{"total":{"percentage":0,"sources":1}}}`), 0o600)
+				err := os.WriteFile(
+					filepath.Join(os.Args[index+1], "report.json"),
+					[]byte(`{"duplicates":[],"statistics":{"total":{"percentage":0,"sources":1}}}`),
+					0o600,
+				)
 				if err != nil {
 					os.Exit(2)
 				}
@@ -31,11 +41,9 @@ func TestMain(m *testing.M) {
 				os.Exit(0)
 			}
 		}
-
-		os.Exit(2)
 	}
 
-	os.Exit(m.Run())
+	os.Exit(2)
 }
 
 func writeVersionTool(t *testing.T, version string) string {
@@ -59,7 +67,8 @@ func TestDuplicationAcceptsMajorAndRecordsVersion(t *testing.T) {
 			cfg.Duplication.Tool = writeVersionTool(t, version)
 			result, err := Analyze(t.Context(), root, cfg, io.Discard)
 			if strings.HasPrefix(version, "5.") {
-				if err != nil || result.Duplication.Config.Version != version || result.Config.Duplication.Version != version {
+				if err != nil || result.Duplication.Config.Version != version ||
+					result.Config.Duplication.Version != version {
 					t.Fatalf("version provenance = %+v, error %v", result.Duplication, err)
 				}
 

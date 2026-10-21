@@ -52,17 +52,21 @@ type normalizedClonePair struct {
 	ambiguous   bool
 }
 
-func buildCloneSourceScopes(files []*sourceFile) map[string]cloneSourceScope {
-	scopes := make(map[string]cloneSourceScope, len(files))
+func buildCloneSourceScopes(files []*sourceFile) map[string]*cloneSourceScope {
+	scopes := make(map[string]*cloneSourceScope, len(files))
 	for _, file := range files {
 		if isTypeScriptPath(file.path) {
-			scopes[file.path] = cloneSourceScope{source: file.source, tsFunctions: file.tsFunctions, tsTokens: file.tsTokens}
+			scopes[file.path] = &cloneSourceScope{
+				source:      file.source,
+				tsFunctions: file.tsFunctions,
+				tsTokens:    file.tsTokens,
+			}
 			continue
 		}
 
 		nodes := collectFunctions(file)
 		assignFunctionNames(nodes)
-		scopes[file.path] = cloneSourceScope{
+		scopes[file.path] = &cloneSourceScope{
 			source:    file.source,
 			fileSet:   file.fileSet,
 			astFile:   file.astFile,
@@ -73,7 +77,7 @@ func buildCloneSourceScopes(files []*sourceFile) map[string]cloneSourceScope {
 	return scopes
 }
 
-func normalizeCloneEndpoint(location report.Location, scope cloneSourceScope) (normalizedCloneEndpoint, error) {
+func normalizeCloneEndpoint(location report.Location, scope *cloneSourceScope) (normalizedCloneEndpoint, error) {
 	start, end, ok := sourceRegionOffsets(scope.source, location)
 	if !ok {
 		return normalizedCloneEndpoint{}, fmt.Errorf(
@@ -82,7 +86,7 @@ func normalizeCloneEndpoint(location report.Location, scope cloneSourceScope) (n
 		)
 	}
 
-	tokens := ""
+	var tokens string
 	if isTypeScriptPath(location.Path) {
 		var normalized strings.Builder
 		for _, token := range scope.tsTokens {
@@ -173,30 +177,41 @@ func sourcePositionOffset(source []byte, position report.Position, inclusiveEnd 
 	return 0, false
 }
 
-func cloneFunctionScope(scope cloneSourceScope, location report.Location) (string, bool) {
+func cloneFunctionScope(scope *cloneSourceScope, location report.Location) (string, bool) {
 	if isTypeScriptPath(location.Path) {
-		start, end, ok := sourceRegionOffsets(scope.source, location)
-		if !ok {
-			return cloneFileScope, false
-		}
+		return typescriptCloneFunctionScope(scope, location)
+	}
 
-		var owner *report.Function
-		ownerSize := len(scope.source) + 1
-		for index := range scope.tsFunctions {
-			function := &scope.tsFunctions[index]
-			left, right, valid := sourceRegionOffsets(scope.source, report.Location{Start: function.Start, End: function.End})
-			if valid && left <= start && right >= end && right-left < ownerSize {
-				owner, ownerSize = function, right-left
-			}
-		}
+	return goCloneFunctionScope(scope, location)
+}
 
-		if owner != nil {
-			return owner.ID, owner.IdentityAmbiguous
-		}
-
+func typescriptCloneFunctionScope(scope *cloneSourceScope, location report.Location) (string, bool) {
+	start, end, ok := sourceRegionOffsets(scope.source, location)
+	if !ok {
 		return cloneFileScope, false
 	}
 
+	var owner *report.Function
+	ownerSize := len(scope.source) + 1
+	for index := range scope.tsFunctions {
+		function := &scope.tsFunctions[index]
+		left, right, valid := sourceRegionOffsets(
+			scope.source,
+			report.Location{Start: function.Start, End: function.End},
+		)
+		if valid && left <= start && right >= end && right-left < ownerSize {
+			owner, ownerSize = function, right-left
+		}
+	}
+
+	if owner != nil {
+		return owner.ID, owner.IdentityAmbiguous
+	}
+
+	return cloneFileScope, false
+}
+
+func goCloneFunctionScope(scope *cloneSourceScope, location report.Location) (string, bool) {
 	if scope.astFile == nil || len(scope.functions) == 0 {
 		if scope.astFile != nil && scope.astFile.Name != nil {
 			return scope.astFile.Name.Name + ".file", false

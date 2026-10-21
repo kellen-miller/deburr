@@ -12,6 +12,19 @@ import (
 	"github.com/odvcencio/gotreesitter/grammars/typescript"
 )
 
+const (
+	typescriptCommentNode        = "comment"
+	typescriptStatementBlockNode = "statement_block"
+	typescriptIterationBase      = 10_000
+	typescriptStackDepthBase     = 1_000
+	typescriptNodeLimitBase      = 300_000
+	typescriptMemoryBudgetBase   = 512 * 1024 * 1024
+	typescriptIterationPerByte   = 30
+	typescriptStackPerByte       = 2
+	typescriptNodesPerByte       = 52
+	typescriptMemoryPerByte      = 512
+)
+
 type typescriptFunction struct {
 	node   *gotreesitter.Node
 	parent *typescriptFunction
@@ -20,18 +33,18 @@ type typescriptFunction struct {
 
 func parseTypeScript(path string, source []byte) (*gotreesitter.Tree, *gotreesitter.Language, error) {
 	language := typescript.Language()
-	if filepath.Ext(path) == ".tsx" {
+	if filepath.Ext(path) == typeScriptReactExtension {
 		language = tsx.Language()
 	}
 
 	parser := gotreesitter.NewParser(language)
 	// Source-derived work limits make parse outcomes independent of host speed.
 	parser.SetParseWorkLimits(gotreesitter.ParseWorkLimits{
-		IterationLimit:  max(10_000, len(source)*30),
-		StackDepthLimit: max(1_000, len(source)*2),
-		NodeLimit:       max(300_000, len(source)*52),
+		IterationLimit:  max(typescriptIterationBase, len(source)*typescriptIterationPerByte),
+		StackDepthLimit: max(typescriptStackDepthBase, len(source)*typescriptStackPerByte),
+		NodeLimit:       max(typescriptNodeLimitBase, len(source)*typescriptNodesPerByte),
 	})
-	parser.SetMemoryBudgetBytes(max(512*1024*1024, int64(len(source))*512))
+	parser.SetMemoryBudgetBytes(max(typescriptMemoryBudgetBase, int64(len(source))*typescriptMemoryPerByte))
 	tree, err := parser.ParseStrict(source)
 	if err != nil {
 		if tree != nil {
@@ -49,119 +62,211 @@ func parseTypeScript(path string, source []byte) (*gotreesitter.Tree, *gotreesit
 	return tree, language, nil
 }
 
-func analyzeTypeScript(file *sourceFile, root *gotreesitter.Node, language *gotreesitter.Language) ([]report.Function, []report.Finding) {
+func analyzeTypeScript(
+	file *sourceFile,
+	root *gotreesitter.Node,
+	language *gotreesitter.Language,
+) ([]report.Function, []report.Finding) {
+	functions := collectTypeScriptFunctions(file, root, language)
+	identityCounts := make(map[string]int, len(functions))
+	for _, function := range functions {
+		identityCounts[function.metric.ID]++
+	}
+
+	occurrences := make(map[string]int, len(functions))
+	findings := make([]report.Finding, 0, len(functions))
+	for _, function := range functions {
+		assignTypeScriptIdentity(function, identityCounts, occurrences)
+		findings = append(findings, analyzeTypeScriptFunction(file, function, language)...)
+	}
+
+	assignTypeScriptLines(file, functions)
+	metrics := make([]report.Function, 0, len(functions))
+	for _, function := range functions {
+		function.metric.Mass = functionMass(function.metric.Cyclomatic, function.metric.SLOC)
+		function.metric.HighComplexity = function.metric.Cyclomatic > highComplexityThreshold
+		metrics = append(metrics, function.metric)
+	}
+
+	assignTypeScriptFindingIDs(findings)
+	return metrics, findings
+}
+
+func collectTypeScriptFunctions(
+	file *sourceFile,
+	root *gotreesitter.Node,
+	language *gotreesitter.Language,
+) []*typescriptFunction {
 	functions := make([]*typescriptFunction, 0)
 	var collect func(*gotreesitter.Node, *typescriptFunction)
 	collect = func(node *gotreesitter.Node, parent *typescriptFunction) {
-		if typescriptFunctionNode(node, language) && node.ChildByFieldName("body", language) != nil {
-			name := ""
-			if identifier := node.ChildByFieldName("name", language); identifier != nil {
-				name = identifier.Text(file.source)
-			} else if owner := node.Parent(); owner != nil {
-				if identifier := owner.ChildByFieldName("name", language); identifier != nil {
-					name = identifier.Text(file.source)
-				}
-			}
-
-			fingerprint := "sha256:" + digestText(typescriptNodeTokens(node, language, file.source))
-			if name == "" {
-				name = "anon-" + strings.TrimPrefix(fingerprint, "sha256:")
-			}
-
-			// Include classes between this function and its enclosing function.
-			// Stopping there avoids repeating a method's class on nested arrows.
-			for owner := node.Parent(); owner != nil; owner = owner.Parent() {
-				if parent != nil && owner == parent.node {
-					break
-				}
-
-				switch owner.Type(language) {
-				case "class_declaration", "abstract_class_declaration", "class":
-					if identifier := owner.ChildByFieldName("name", language); identifier != nil {
-						name = identifier.Text(file.source) + "." + name
-					}
-				}
-			}
-
-			if parent != nil {
-				name = parent.metric.Name + "." + name
-			}
-
-			start, end := typescriptPosition(node, file.source)
-			function := &typescriptFunction{node: node, parent: parent, metric: report.Function{
-				ID: "typescript/" + file.path + "::" + name, Name: name, Fingerprint: fingerprint,
-				Path: file.path, Category: file.category, Start: start, End: end, Cyclomatic: 1,
-			}}
+		if function := typeScriptFunctionForNode(file, node, parent, language); function != nil {
 			functions = append(functions, function)
 			parent = function
 		}
 
-		for index := 0; index < node.NamedChildCount(); index++ {
+		childCount := node.NamedChildCount()
+		for index := range childCount {
 			collect(node.NamedChild(index), parent)
 		}
 	}
 
 	collect(root, nil)
-	counts := make(map[string]int)
-	for _, function := range functions {
-		counts[function.metric.ID]++
+	return functions
+}
+
+func typeScriptFunctionForNode(
+	file *sourceFile,
+	node *gotreesitter.Node,
+	parent *typescriptFunction,
+	language *gotreesitter.Language,
+) *typescriptFunction {
+	if !typescriptFunctionNode(node, language) || node.ChildByFieldName("body", language) == nil {
+		return nil
 	}
 
-	occurrences := make(map[string]int)
+	name := typescriptFunctionName(file, node, parent, language)
+	fingerprint := "sha256:" + digestText(typescriptNodeTokens(node, language, file.source))
+	if name == "" {
+		name = "anon-" + strings.TrimPrefix(fingerprint, "sha256:")
+	}
+
+	start, end := typescriptPosition(node, file.source)
+	return &typescriptFunction{
+		node:   node,
+		parent: parent,
+		metric: report.Function{
+			ID:          "typescript/" + file.path + "::" + name,
+			Name:        name,
+			Fingerprint: fingerprint,
+			Path:        file.path,
+			Category:    file.category,
+			Start:       start,
+			End:         end,
+			Cyclomatic:  1,
+		},
+	}
+}
+
+func typescriptFunctionName(
+	file *sourceFile,
+	node *gotreesitter.Node,
+	parent *typescriptFunction,
+	language *gotreesitter.Language,
+) string {
+	name := ""
+	if identifier := node.ChildByFieldName("name", language); identifier != nil {
+		name = identifier.Text(file.source)
+	} else if owner := node.Parent(); owner != nil {
+		if ownerName := owner.ChildByFieldName("name", language); ownerName != nil {
+			name = ownerName.Text(file.source)
+		}
+	}
+
+	// Include classes between this function and its enclosing function.
+	// Stopping there avoids repeating a method's class on nested arrows.
+	for owner := node.Parent(); owner != nil; owner = owner.Parent() {
+		if parent != nil && owner == parent.node {
+			break
+		}
+
+		switch owner.Type(language) {
+		case "class_declaration", "abstract_class_declaration", "class":
+			if identifier := owner.ChildByFieldName("name", language); identifier != nil {
+				name = identifier.Text(file.source) + "." + name
+			}
+		}
+	}
+
+	if parent != nil {
+		name = parent.metric.Name + "." + name
+	}
+
+	return name
+}
+
+func assignTypeScriptIdentity(
+	function *typescriptFunction,
+	counts, occurrences map[string]int,
+) {
+	base := function.metric.ID
+	function.metric.IdentityAmbiguous = counts[base] > 1 ||
+		(function.parent != nil && function.parent.metric.IdentityAmbiguous)
+	occurrences[base]++
+	if occurrences[base] > 1 {
+		function.metric.ID += "#" + strconv.Itoa(occurrences[base])
+	}
+}
+
+func analyzeTypeScriptFunction(
+	file *sourceFile,
+	function *typescriptFunction,
+	language *gotreesitter.Language,
+) []report.Finding {
 	findings := make([]report.Finding, 0)
-	for _, function := range functions {
-		base := function.metric.ID
-		function.metric.IdentityAmbiguous = counts[base] > 1 || (function.parent != nil && function.parent.metric.IdentityAmbiguous)
-		occurrences[base]++
-		if occurrences[base] > 1 {
-			function.metric.ID += "#" + strconv.Itoa(occurrences[base])
+	var walk func(*gotreesitter.Node, int)
+	walk = func(node *gotreesitter.Node, depth int) {
+		if node != function.node && typescriptFunctionNode(node, language) {
+			return
 		}
 
-		var walk func(*gotreesitter.Node, int)
-		walk = func(node *gotreesitter.Node, depth int) {
-			if node != function.node && typescriptFunctionNode(node, language) {
-				return
-			}
-
-			switch node.Type(language) {
-			case "if_statement", "for_statement", "for_in_statement", "while_statement", "do_statement", "catch_clause", "ternary_expression":
-				function.metric.Cyclomatic++
-				depth++
-				if depth > 1 {
-					function.metric.StructuralSignals.NestedBranches++
-				}
-
-			case "switch_statement":
-				if depth > 0 {
-					function.metric.StructuralSignals.NestedBranches++
-				}
-
-				depth++
-			case "switch_case":
-				function.metric.Cyclomatic++
-			case "binary_expression":
-				if operator := node.ChildByFieldName("operator", language); operator != nil {
-					switch operator.Text(file.source) {
-					case "&&", "||", "??":
-						function.metric.Cyclomatic++
-					}
-				}
-			}
-
-			if depth > function.metric.MaxNesting {
-				function.metric.MaxNesting = depth
-			}
-
-			findings = append(findings, typescriptBranchFindings(file, function, node, language)...)
-			for index := 0; index < node.NamedChildCount(); index++ {
-				walk(node.NamedChild(index), depth)
-			}
+		depth = updateTypeScriptFunctionMetrics(function, node, depth, file.source, language)
+		findings = append(findings, typescriptBranchFindings(file, function, node, language)...)
+		childCount := node.NamedChildCount()
+		for index := range childCount {
+			walk(node.NamedChild(index), depth)
 		}
-
-		walk(function.node.ChildByFieldName("body", language), 0)
 	}
 
-	// Assign each code line to its innermost function, matching Go accounting.
+	walk(function.node.ChildByFieldName("body", language), 0)
+	return findings
+}
+
+func updateTypeScriptFunctionMetrics(
+	function *typescriptFunction,
+	node *gotreesitter.Node,
+	depth int,
+	source []byte,
+	language *gotreesitter.Language,
+) int {
+	switch node.Type(language) {
+	case "if_statement",
+		"for_statement",
+		"for_in_statement",
+		"while_statement",
+		"do_statement",
+		"catch_clause",
+		"ternary_expression":
+		function.metric.Cyclomatic++
+		depth++
+		if depth > 1 {
+			function.metric.StructuralSignals.NestedBranches++
+		}
+	case "switch_statement":
+		if depth > 0 {
+			function.metric.StructuralSignals.NestedBranches++
+		}
+
+		depth++
+	case "switch_case":
+		function.metric.Cyclomatic++
+	case "binary_expression":
+		if operator := node.ChildByFieldName("operator", language); operator != nil {
+			switch operator.Text(source) {
+			case "&&", "||", "??":
+				function.metric.Cyclomatic++
+			}
+		}
+	}
+
+	if depth > function.metric.MaxNesting {
+		function.metric.MaxNesting = depth
+	}
+
+	return depth
+}
+
+func assignTypeScriptLines(file *sourceFile, functions []*typescriptFunction) {
 	for line, code := range file.lineCode {
 		if !code {
 			continue
@@ -173,7 +278,8 @@ func analyzeTypeScript(file *sourceFile, root *gotreesitter.Node, language *gotr
 				continue
 			}
 
-			if owner == nil || function.node.EndByte()-function.node.StartByte() < owner.node.EndByte()-owner.node.StartByte() {
+			if owner == nil ||
+				function.node.EndByte()-function.node.StartByte() < owner.node.EndByte()-owner.node.StartByte() {
 				owner = function
 			}
 		}
@@ -182,15 +288,10 @@ func analyzeTypeScript(file *sourceFile, root *gotreesitter.Node, language *gotr
 			owner.metric.SLOC++
 		}
 	}
+}
 
-	metrics := make([]report.Function, 0, len(functions))
-	for _, function := range functions {
-		function.metric.Mass = functionMass(function.metric.Cyclomatic, function.metric.SLOC)
-		function.metric.HighComplexity = function.metric.Cyclomatic > highComplexityThreshold
-		metrics = append(metrics, function.metric)
-	}
-
-	findingCounts := make(map[string]int)
+func assignTypeScriptFindingIDs(findings []report.Finding) {
+	findingCounts := make(map[string]int, len(findings))
 	for index := range findings {
 		base := findings[index].ID
 		findingCounts[base]++
@@ -198,13 +299,16 @@ func analyzeTypeScript(file *sourceFile, root *gotreesitter.Node, language *gotr
 			findings[index].ID += "#" + strconv.Itoa(findingCounts[base])
 		}
 	}
-
-	return metrics, findings
 }
 
 func typescriptFunctionNode(node *gotreesitter.Node, language *gotreesitter.Language) bool {
 	switch node.Type(language) {
-	case "function_declaration", "generator_function_declaration", "function_expression", "generator_function", "arrow_function", "method_definition":
+	case "function_declaration",
+		"generator_function_declaration",
+		"function_expression",
+		"generator_function",
+		"arrow_function",
+		"method_definition":
 		return true
 	default:
 		return false
@@ -225,8 +329,8 @@ func typescriptPosition(node *gotreesitter.Node, source []byte) (report.Position
 }
 
 type typescriptSourceToken struct {
-	start, end uint32
 	text       string
+	start, end uint32
 }
 
 // Preserve literals verbatim; only syntax whitespace and comments are ignored.
@@ -235,16 +339,21 @@ func typescriptTokens(node *gotreesitter.Node, language *gotreesitter.Language, 
 	var walk func(*gotreesitter.Node)
 	walk = func(current *gotreesitter.Node) {
 		typeName := current.Type(language)
-		if typeName == "comment" {
+		if typeName == typescriptCommentNode {
 			return
 		}
 
 		if current.ChildCount() == 0 || typeName == "string" || typeName == "template_string" || typeName == "regex" {
-			tokens = append(tokens, typescriptSourceToken{current.StartByte(), current.EndByte(), current.Text(source)})
+			tokens = append(tokens, typescriptSourceToken{
+				start: current.StartByte(),
+				end:   current.EndByte(),
+				text:  current.Text(source),
+			})
 			return
 		}
 
-		for index := 0; index < current.ChildCount(); index++ {
+		childCount := current.ChildCount()
+		for index := range childCount {
 			walk(current.Child(index))
 		}
 	}
@@ -267,7 +376,7 @@ func typescriptLineMap(root *gotreesitter.Node, language *gotreesitter.Language,
 	lines := make([]bool, physicalLineCount(source)+1)
 	var walk func(*gotreesitter.Node)
 	walk = func(node *gotreesitter.Node) {
-		if node.Type(language) == "comment" {
+		if node.Type(language) == typescriptCommentNode {
 			return
 		}
 
@@ -280,129 +389,12 @@ func typescriptLineMap(root *gotreesitter.Node, language *gotreesitter.Language,
 			return
 		}
 
-		for index := 0; index < node.ChildCount(); index++ {
+		childCount := node.ChildCount()
+		for index := range childCount {
 			walk(node.Child(index))
 		}
 	}
 
 	walk(root)
 	return lines
-}
-
-func typescriptBranchFindings(file *sourceFile, function *typescriptFunction, node *gotreesitter.Node, language *gotreesitter.Language) []report.Finding {
-	if node.Type(language) != "if_statement" {
-		return nil
-	}
-
-	consequence := node.ChildByFieldName("consequence", language)
-	alternative := node.ChildByFieldName("alternative", language)
-	if consequence == nil {
-		return nil
-	}
-
-	if alternative == nil {
-		if parent := node.Parent(); parent != nil && parent.Type(language) == "statement_block" {
-			for index := 0; index+1 < parent.NamedChildCount(); index++ {
-				if parent.NamedChild(index).StartByte() == node.StartByte() {
-					for next := index + 1; next < parent.NamedChildCount(); next++ {
-						if sibling := parent.NamedChild(next); sibling.Type(language) != "comment" {
-							alternative = sibling
-							break
-						}
-					}
-
-					break
-				}
-			}
-		}
-	}
-
-	if alternative == nil {
-		return nil
-	}
-
-	// Tree-sitter wraps the else body in an else_clause.
-	if alternative.Type(language) == "else_clause" && alternative.NamedChildCount() > 0 {
-		alternative = alternative.NamedChild(alternative.NamedChildCount() - 1)
-	}
-
-	rule, message := "", ""
-	left := typescriptNodeTokens(consequence, language, file.source)
-	right := typescriptNodeTokens(alternative, language, file.source)
-	if consequence.Type(language) == "statement_block" && consequence.NamedChildCount() > 0 && left != `"{";"}";` && left == right {
-		rule = "duplicate-branches"
-		message = "conditional branches contain identical syntax; review consolidating them"
-	}
-
-	booleanReturn := func(branch *gotreesitter.Node) string {
-		if branch.Type(language) == "statement_block" {
-			var statement *gotreesitter.Node
-			for index := 0; index < branch.NamedChildCount(); index++ {
-				child := branch.NamedChild(index)
-				if child.Type(language) == "comment" {
-					continue
-				}
-
-				if statement != nil {
-					return ""
-				}
-
-				statement = child
-			}
-
-			if statement == nil {
-				return ""
-			}
-
-			branch = statement
-		}
-
-		if branch.Type(language) != "return_statement" || branch.NamedChildCount() != 1 {
-			return ""
-		}
-
-		value := branch.NamedChild(0).Type(language)
-		if value == "true" || value == "false" {
-			return value
-		}
-
-		return ""
-	}
-
-	if first, second := booleanReturn(consequence), booleanReturn(alternative); first != "" && second != "" && first != second {
-		condition := node.ChildByFieldName("condition", language)
-		if condition != nil && condition.Type(language) == "parenthesized_expression" && condition.NamedChildCount() == 1 {
-			condition = condition.NamedChild(0)
-		}
-
-		if condition != nil && condition.Type(language) == "binary_expression" {
-			operator := condition.ChildByFieldName("operator", language)
-			if operator != nil {
-				switch operator.Text(file.source) {
-				case "===", "!==", "==", "!=", "<", ">", "<=", ">=":
-					rule = "redundant-boolean-return"
-					message = "boolean branches return opposite literals; review replacing them with the condition or its negation"
-				}
-			}
-		}
-	}
-
-	if rule == "" {
-		return nil
-	}
-
-	content := typescriptNodeTokens(node, language, file.source)
-	start, end := typescriptPosition(node, file.source)
-	if alternative.EndByte() > node.EndByte() {
-		_, end = typescriptPosition(alternative, file.source)
-		content += typescriptNodeTokens(alternative, language, file.source)
-	}
-
-	return []report.Finding{{
-		ID:          stableFindingID(file.path, rule, function.metric.ID, content, 0),
-		Fingerprint: digestText("finding\x00" + function.metric.Fingerprint + "\x00" + content),
-		Rule:        rule, Path: file.path, Severity: "review", Message: message, Start: start, End: end,
-		IdentityAmbiguous: function.metric.IdentityAmbiguous,
-		Details:           []report.Detail{{Key: "owner", Value: function.metric.Name}, {Key: "candidate_only", Value: "true"}},
-	}}
 }

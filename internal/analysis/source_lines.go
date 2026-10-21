@@ -9,23 +9,6 @@ import (
 	"strings"
 )
 
-func sourceLineCounts(filename string, source []byte) (int, int) {
-	if len(source) == 0 {
-		return 0, 0
-	}
-
-	lines := physicalLineCount(source)
-	lineCode := sourceLineMap(filename, source)
-	codeLines := 0
-	for _, code := range lineCode {
-		if code {
-			codeLines++
-		}
-	}
-
-	return lines, codeLines
-}
-
 func physicalLineCount(source []byte) int {
 	lines := bytes.Count(source, []byte{'\n'})
 	if len(source) > 0 && source[len(source)-1] != '\n' {
@@ -89,7 +72,7 @@ func tokenEndLine(file *token.File, source []byte, pos token.Pos, tok token.Toke
 
 func isGenerated(path string, source []byte) bool {
 	if isTypeScriptPath(path) {
-		for _, line := range strings.Split(string(source), "\n") {
+		for line := range strings.SplitSeq(string(source), "\n") {
 			line = strings.TrimSpace(line)
 			if line == "" {
 				continue
