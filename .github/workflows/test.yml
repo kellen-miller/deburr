@@ -105,6 +105,19 @@ jobs:
               ]
             }
 
+  go-lint:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).go) }}
+    name: Go lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: kellen-miller/ci/.github/actions/go-lint@9478f2f23f217048a86cb1916fb78b312f20afa7
+        with:
+          go-version-file: go.mod
+
   go:
     needs: changes
     if: ${{ !cancelled() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).go) }}

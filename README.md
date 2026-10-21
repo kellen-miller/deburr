@@ -153,7 +153,10 @@ baseline, make behavior-preserving changes, and compare. The portable
 
 ## Development
 
-Run `go test ./...`. See [docs/testing.md](docs/testing.md) for the pinned
+Run `go test ./...`. Go lint and formatting run in pull-request CI through
+`kellen-miller/ci/.github/actions/go-lint` pinned to
+`9478f2f23f217048a86cb1916fb78b312f20afa7`, using its bundled policy.
+See [docs/testing.md](docs/testing.md) for the pinned
 VS Code integration test and known TypeScript parser limitations.
 
 ## License
