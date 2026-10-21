@@ -117,6 +117,7 @@ jobs:
       - uses: kellen-miller/ci/.github/actions/go-lint@d5df2e2c61a40744e456bf53e5e44f17dad258e8
         with:
           go-version-file: go.mod
+          govulncheck-version: v1.9.0
 
   go:
     needs: changes
