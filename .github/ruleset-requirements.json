@@ -1,0 +1,16 @@
+{
+  "checks": [
+    "CPD/jscpd major 5 integration",
+    "GitHub Action duplication smoke test",
+    "GitHub Action smoke test (macos-latest)",
+    "GitHub Action smoke test (ubuntu-latest)",
+    "GitHub Action smoke test (windows-latest)",
+    "Go (macos-latest) / Go Test",
+    "Go (ubuntu-latest) / Go Test",
+    "Go (windows-latest) / Go Test",
+    "VS Code TypeScript integration",
+    "Renovate / Config validation",
+    "GitHub Actions / Workflow validation",
+    "Code duplication (CPD)"
+  ]
+}
