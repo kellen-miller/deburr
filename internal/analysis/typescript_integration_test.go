@@ -34,7 +34,6 @@ func TestVSCodeTypeScriptIntegration(t *testing.T) {
 			function.Fingerprint == "" {
 			t.Fatalf("invalid measurement in corpus: %+v", function)
 		}
-
 	}
 
 	t.Logf(
