@@ -295,7 +295,7 @@ jobs:
       - name: Set up Node for detector installation
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
-          node-version: 24
+          node-version: 26
 
       - name: Install latest detector releases in major 5
         run: npm install -g cpd@5 jscpd@5
