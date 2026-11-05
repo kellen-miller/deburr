@@ -121,7 +121,7 @@ jobs:
           govulncheck-version: v1.9.0
 
   go-package-tests:
-    name: Go
+    name: Go (${{ matrix.os }})
     needs: deburr-paths
     if: ${{ !cancelled() && (needs.deburr-paths.result != 'success' || fromJSON(needs.deburr-paths.outputs.changes).go) }}
     strategy:
@@ -133,7 +133,7 @@ jobs:
           - windows-latest
     uses: kellen-miller/ci/.github/workflows/go-test.yaml@c188397b9147dbf21030cf2f3e4fc41bff37358b
     with:
-      check-name: Package tests (${{ matrix.os }})
+      check-name: Package tests
       runner: ${{ matrix.os }}
       go-version-file: go.mod
       race: false
