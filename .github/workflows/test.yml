@@ -1,17 +1,18 @@
-name: Test
+name: Deburr
 
 on:
   pull_request:
 
 concurrency:
-  group: ${{ github.workflow }}-pr-${{ github.event.pull_request.number }}
+  group: Test-pr-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 permissions:
   contents: read
 
 jobs:
-  changes:
+  deburr-paths:
+    name: Changed paths
     runs-on: ubuntu-latest
     outputs:
       changes: ${{ steps.paths.outputs.changes }}
@@ -105,10 +106,10 @@ jobs:
               ]
             }
 
-  go-lint:
-    needs: changes
-    if: ${{ !cancelled() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).go) }}
-    name: Go lint
+  go-static-analysis:
+    name: Go / Static analysis
+    needs: deburr-paths
+    if: ${{ !cancelled() && (needs.deburr-paths.result != 'success' || fromJSON(needs.deburr-paths.outputs.changes).go) }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -119,10 +120,10 @@ jobs:
           go-version-file: go.mod
           govulncheck-version: v1.9.0
 
-  go:
-    needs: changes
-    if: ${{ !cancelled() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).go) }}
+  go-package-tests:
     name: Go (${{ matrix.os }})
+    needs: deburr-paths
+    if: ${{ !cancelled() && (needs.deburr-paths.result != 'success' || fromJSON(needs.deburr-paths.outputs.changes).go) }}
     strategy:
       fail-fast: false
       matrix:
@@ -130,18 +131,19 @@ jobs:
           - ubuntu-latest
           - macos-latest
           - windows-latest
-    uses: kellen-miller/ci/.github/workflows/go-test.yaml@2af77688327c2fc0f164e91f77e8784ef25e14c6
+    uses: kellen-miller/ci/.github/workflows/go-test.yaml@c188397b9147dbf21030cf2f3e4fc41bff37358b
     with:
+      check-name: Package tests
       runner: ${{ matrix.os }}
       go-version-file: go.mod
       race: false
       vet: true
       build-target: ./cmd/deburr
 
-  action-smoke:
-    needs: changes
-    if: ${{ !cancelled() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).action) }}
-    name: GitHub Action smoke test (${{ matrix.os }})
+  action-smoke-tests:
+    name: GitHub Actions / Action smoke tests (${{ matrix.os }})
+    needs: deburr-paths
+    if: ${{ !cancelled() && (needs.deburr-paths.result != 'success' || fromJSON(needs.deburr-paths.outputs.changes).action) }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -170,10 +172,10 @@ jobs:
         shell: bash
         run: test -s "$REPORT"
 
-  action-duplication-smoke:
-    needs: changes
-    if: ${{ !cancelled() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).action) }}
-    name: GitHub Action duplication smoke test
+  action-duplication-tests:
+    name: GitHub Actions / Duplication smoke tests
+    needs: deburr-paths
+    if: ${{ !cancelled() && (needs.deburr-paths.result != 'success' || fromJSON(needs.deburr-paths.outputs.changes).action) }}
     runs-on: ubuntu-latest
     steps:
       - name: Check out
@@ -275,10 +277,10 @@ jobs:
           test -s "$REPORT"
           grep -q 'unsupported' "$REPORT"
 
-  duplication-real:
-    needs: changes
-    if: ${{ !cancelled() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).detectors) }}
-    name: CPD/jscpd major 5 integration
+  detector-integration-tests:
+    name: Detector integration tests (CPD/jscpd 5)
+    needs: deburr-paths
+    if: ${{ !cancelled() && (needs.deburr-paths.result != 'success' || fromJSON(needs.deburr-paths.outputs.changes).detectors) }}
     runs-on: ubuntu-latest
     steps:
       - name: Check out
@@ -385,10 +387,10 @@ jobs:
               assert duplication["config"]["enforce_threshold"] == (name == "ENFORCED_REPORT")
           PY
 
-  typescript-integration:
-    needs: changes
-    if: ${{ !cancelled() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.changes).typescript) }}
-    name: VS Code TypeScript integration
+  typescript-integration-tests:
+    name: TypeScript integration tests (VS Code)
+    needs: deburr-paths
+    if: ${{ !cancelled() && (needs.deburr-paths.result != 'success' || fromJSON(needs.deburr-paths.outputs.changes).typescript) }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:

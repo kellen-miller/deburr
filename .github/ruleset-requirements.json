@@ -1,16 +1,16 @@
 {
   "checks": [
-    "CPD/jscpd major 5 integration",
-    "GitHub Action duplication smoke test",
-    "GitHub Action smoke test (macos-latest)",
-    "GitHub Action smoke test (ubuntu-latest)",
-    "GitHub Action smoke test (windows-latest)",
-    "Go (macos-latest) / Go Test",
-    "Go (ubuntu-latest) / Go Test",
-    "Go (windows-latest) / Go Test",
-    "VS Code TypeScript integration",
-    "Renovate / Config validation",
-    "GitHub Actions / Workflow validation",
-    "Code duplication (CPD)"
+    "Detector integration tests (CPD/jscpd 5)",
+    "GitHub Actions / Duplication smoke tests",
+    "GitHub Actions / Action smoke tests (macos-latest)",
+    "GitHub Actions / Action smoke tests (ubuntu-latest)",
+    "GitHub Actions / Action smoke tests (windows-latest)",
+    "Go (macos-latest) / Package tests",
+    "Go (ubuntu-latest) / Package tests",
+    "Go (windows-latest) / Package tests",
+    "TypeScript integration tests (VS Code)",
+    "renovate.json / Config validation",
+    ".github/workflows / Workflow validation",
+    "JSCPD scan"
   ]
 }
