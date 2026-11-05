@@ -11,6 +11,6 @@
     "Deburr / TypeScript integration tests (VS Code)",
     "Renovate / Config validation",
     "GitHub Actions / Workflow validation",
-    "Code duplication / Source analysis"
+    "Code duplication / JSCPD scan"
   ]
 }
