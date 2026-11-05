@@ -9,8 +9,8 @@
     "Go (ubuntu-latest) / Package tests",
     "Go (windows-latest) / Package tests",
     "TypeScript integration tests (VS Code)",
-    "Renovate / Config validation",
-    "GitHub Actions / Workflow validation",
+    "renovate.json / Config validation",
+    ".github/workflows / Workflow validation",
     "JSCPD scan"
   ]
 }
