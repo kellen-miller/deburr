@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   deburr-paths:
-    name: Deburr / Changed paths
+    name: Changed paths
     runs-on: ubuntu-latest
     outputs:
       changes: ${{ steps.paths.outputs.changes }}
@@ -278,7 +278,7 @@ jobs:
           grep -q 'unsupported' "$REPORT"
 
   detector-integration-tests:
-    name: Deburr / Detector integration tests (CPD/jscpd 5)
+    name: Detector integration tests (CPD/jscpd 5)
     needs: deburr-paths
     if: ${{ !cancelled() && (needs.deburr-paths.result != 'success' || fromJSON(needs.deburr-paths.outputs.changes).detectors) }}
     runs-on: ubuntu-latest
@@ -388,7 +388,7 @@ jobs:
           PY
 
   typescript-integration-tests:
-    name: Deburr / TypeScript integration tests (VS Code)
+    name: TypeScript integration tests (VS Code)
     needs: deburr-paths
     if: ${{ !cancelled() && (needs.deburr-paths.result != 'success' || fromJSON(needs.deburr-paths.outputs.changes).typescript) }}
     runs-on: ubuntu-latest

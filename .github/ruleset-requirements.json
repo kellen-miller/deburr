@@ -1,6 +1,6 @@
 {
   "checks": [
-    "Deburr / Detector integration tests (CPD/jscpd 5)",
+    "Detector integration tests (CPD/jscpd 5)",
     "GitHub Actions / Duplication smoke tests",
     "GitHub Actions / Action smoke tests (macos-latest)",
     "GitHub Actions / Action smoke tests (ubuntu-latest)",
@@ -8,9 +8,9 @@
     "Go (macos-latest) / Package tests",
     "Go (ubuntu-latest) / Package tests",
     "Go (windows-latest) / Package tests",
-    "Deburr / TypeScript integration tests (VS Code)",
+    "TypeScript integration tests (VS Code)",
     "Renovate / Config validation",
     "GitHub Actions / Workflow validation",
-    "Code duplication / JSCPD scan"
+    "JSCPD scan"
   ]
 }
