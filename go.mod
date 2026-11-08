@@ -5,7 +5,7 @@ go 1.27
 require (
 	github.com/bmatcuk/doublestar/v4 v4.10.4
 	github.com/go-git/go-git/v5 v5.19.3
-	github.com/odvcencio/gotreesitter v0.56.0
+	github.com/odvcencio/gotreesitter v0.57.0
 )
 
 require (
