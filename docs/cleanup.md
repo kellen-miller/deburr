@@ -120,17 +120,26 @@ does not support the proposed change. Do not chase zero findings.
 ## Report and CI boundaries
 
 The CLI supports Go and TypeScript analysis. A report must make unsupported or
-unparsed input visible. Report formats are `text`, `json`,
-`html`, and `github`:
+unparsed input visible. Report formats are `json`, `text`, `markdown`, `html`,
+and `github`:
 
 ```text
-deburr audit PATH --format text --output report.txt
-deburr audit PATH --format html --output report.html
+deburr audit PATH --format json --output report.json
+deburr render report.json --source PATH --format html --output report.html
 ```
 
-Use `github` when a caller wants GitHub Actions annotations or a file suitable
-for an artifact. The GitHub Action invokes this same CLI and exposes its report
-path. It does not add an independent analyzer or mandatory quality threshold.
+`json` is the complete, stable contract: read it when a tool or agent needs
+every function, finding, and clone. `text`, `markdown`, `html`, and `github` are
+human formats that show a verdict, hints, and a ranked "Start here" list, and
+they may change in any release, so do not parse them. `deburr render` writes any
+of them from a saved JSON report without reanalyzing. Use `markdown` for
+pull-request text and `github` for GitHub Actions annotations.
+
+The GitHub Action invokes this same CLI. It audits once, prints annotations,
+writes the markdown report to the job summary, and uploads `report.json` and
+`report.html` as an artifact. On pull requests it audits the base commit too and
+annotates only what the pull request made worse. It does not add an independent
+analyzer or mandatory quality threshold.
 
 Duplication analysis is built in and on by default. Deburr tokenizes the files
 it already analyzed and finds repeated token runs in them. Nothing outside the
@@ -159,6 +168,8 @@ is file-level code such as imports or declarations.
 
 The GitHub Action exposes the same controls: `duplicates` (default `true`),
 `min-clone-tokens`, and `min-clone-lines`. It needs no detector installed.
+Its `summary`, `upload`, `artifact-name`, and `compare-base` inputs control the
+job summary, the artifact, and the pull-request comparison.
 
 Report positions, including duplication locations, use one-based lines and
 columns with inclusive end positions.

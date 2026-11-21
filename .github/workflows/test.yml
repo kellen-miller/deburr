@@ -103,12 +103,15 @@ jobs:
       # The repository root holds deliberately malformed corpus files, so the
       # Action audits the clean duplication corpus. `uses: ./` is not a
       # release tag, so the Action builds Deburr with cargo build --release.
+      # Artifact names must be unique within a run, so only the human-format
+      # test below uploads.
       - name: Audit with built-in duplication
         id: measured
         uses: ./
         with:
           path: tests/corpus/dup
           format: json
+          upload: false
 
       - name: Verify measured duplication
         env:
@@ -127,6 +130,7 @@ jobs:
           path: tests/corpus/dup
           format: json
           duplicates: false
+          upload: false
 
       - name: Verify duplication was skipped
         env:
@@ -144,6 +148,7 @@ jobs:
           path: tests/corpus/dup
           format: json
           min-clone-tokens: 100000
+          upload: false
 
       - name: Verify the clone size applies
         env:
@@ -163,12 +168,59 @@ jobs:
           path: tests/corpus/dup
           format: json
           min-clone-lines: 0
+          upload: false
 
       - name: Verify the invalid clone size was rejected
         env:
           OUTCOME: ${{ steps.rejected.outcome }}
         shell: bash
         run: test "$OUTCOME" = failure
+
+      # This pull-request run also exercises pull-request mode: the Action
+      # fetches the base commit, audits it, and compares. Any failure there
+      # must fall back to plain annotations without failing the step.
+      - name: Audit with the human formats and upload
+        id: human
+        uses: ./
+        with:
+          path: tests/corpus/dup
+          format: html
+          artifact-name: deburr-smoke-${{ matrix.os }}
+
+      - name: Verify the human report files
+        env:
+          REPORT: ${{ steps.human.outputs.report }}
+          DIRECTORY: ${{ steps.human.outputs.directory }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s "$REPORT"
+          grep -q 'id="deburr-report"' "$REPORT"
+          test -s "$DIRECTORY/report.json"
+          grep -q '"schema_version": "3"' "$DIRECTORY/report.json"
+          test -s "$DIRECTORY/report.md"
+          grep -q '^## deburr' "$DIRECTORY/report.md"
+          test -s "$DIRECTORY/report.github"
+          grep -q '^::notice' "$DIRECTORY/report.github"
+
+      - name: Audit with the requested format as text
+        id: plain
+        uses: ./
+        with:
+          path: tests/corpus/dup
+          format: text
+          summary: false
+          upload: false
+          compare-base: false
+
+      - name: Verify the text report has no escape codes
+        env:
+          REPORT: ${{ steps.plain.outputs.report }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s "$REPORT"
+          ! grep -q $'\033' "$REPORT"
 
   action-hostile-config-tests:
     name: GitHub Actions / Hostile Cargo config (${{ matrix.os }})
@@ -223,6 +275,7 @@ jobs:
         with:
           path: tests/corpus/dup
           format: json
+          upload: false
 
       - name: Verify the audit succeeded and the workspace was not used
         env:
