@@ -162,7 +162,7 @@ fn audit_writes_json_report_to_stdout() {
 
     assert_eq!(code(&output), 0, "stderr: {}", stderr(&output));
     assert!(stdout.ends_with("}\n"));
-    assert!(stdout.contains("\"schema_version\": \"3\""));
+    assert!(stdout.contains("\"schema_version\": \"4\""));
 }
 
 /// Audits a one-file Go tree to JSON; returns the tree and the report path.

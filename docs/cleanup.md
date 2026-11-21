@@ -1,8 +1,8 @@
 # Deburr cleanup guide
 
 Use this guide with any harness that can run the `deburr` binary. Deburr is a
-deterministic Go and TypeScript analyzer. It reports evidence for review; it does not use a
-model, rewrite files, or decide that a repository is good or bad.
+deterministic Go, TypeScript, and Rust analyzer. It reports evidence for review; it does not
+use a model, rewrite files, or decide that a repository is good or bad.
 
 ## Before changing code
 
@@ -119,7 +119,7 @@ does not support the proposed change. Do not chase zero findings.
 
 ## Report and CI boundaries
 
-The CLI supports Go and TypeScript analysis. A report must make unsupported or
+The CLI supports Go, TypeScript, and Rust analysis. A report must make unsupported or
 unparsed input visible. Report formats are `json`, `text`, `markdown`, `html`,
 and `github`:
 

@@ -69,7 +69,8 @@ fn function(index: u32, mass: f64, high_complexity: bool) -> Function {
         "category": "production",
         "name": format!("F{index:02}"),
         "structural_signals": {
-            "flat_guards": 1, "field_mappings": 2, "nested_branches": 3, "assertion_like_calls": 4
+            "flat_guards": 1, "field_mappings": 2, "nested_branches": 3, "assertion_like_calls": 4,
+            "clone_like_calls": 0, "unwrap_like_calls": 0, "panic_macros": 0, "unsafe_blocks": 0
         },
         "start": { "line": index + 1, "column": 1 },
         "end": { "line": index + 5, "column": 2 },
@@ -118,12 +119,12 @@ pub(crate) fn sample_report() -> Report {
             "build": { "version": "1.0.0-test" }
         },
         "analyzer": { "id": "deburr", "version": "1.0.0" },
-        "schema_version": "3",
+        "schema_version": "4",
         "files": [
             { "path": "main.go", "category": "production", "status": "analyzed",
-              "bytes": 120, "lines": 12, "code_lines": 9 },
+              "bytes": 120, "lines": 12, "code_lines": 9, "inline_test_code_lines": 0 },
             { "path": "broken,file.go", "category": "production", "status": "parse_error",
-              "error": "syntax error at 3:5", "bytes": 10, "lines": 2, "code_lines": 1 }
+              "error": "syntax error at 3:5", "bytes": 10, "lines": 2, "code_lines": 1, "inline_test_code_lines": 0 }
         ],
         "functions": [],
         "findings": [{

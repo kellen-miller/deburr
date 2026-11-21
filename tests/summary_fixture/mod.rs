@@ -24,7 +24,7 @@ pub(crate) fn base_report() -> Report {
             "build": { "version": "1.0.0" }
         },
         "analyzer": { "id": "deburr", "version": "1.0.0" },
-        "schema_version": "3",
+        "schema_version": "4",
         "files": [],
         "functions": [],
         "findings": [],
@@ -68,7 +68,8 @@ pub(crate) fn function(path: &str, name: &str, line: u32, sloc: u32, cyclomatic:
         "category": "production",
         "name": name,
         "structural_signals": {
-            "flat_guards": 0, "field_mappings": 0, "nested_branches": 0, "assertion_like_calls": 0
+            "flat_guards": 0, "field_mappings": 0, "nested_branches": 0, "assertion_like_calls": 0,
+            "clone_like_calls": 0, "unwrap_like_calls": 0, "panic_macros": 0, "unsafe_blocks": 0
         },
         "start": { "line": line, "column": 1 },
         "end": { "line": line + sloc, "column": 2 },

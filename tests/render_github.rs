@@ -19,7 +19,8 @@ fn big_function(index: u32, sloc: u32) -> Function {
         "category": "production",
         "name": format!("Big{index:02}"),
         "structural_signals": {
-            "flat_guards": 0, "field_mappings": 0, "nested_branches": 0, "assertion_like_calls": 0
+            "flat_guards": 0, "field_mappings": 0, "nested_branches": 0, "assertion_like_calls": 0,
+            "clone_like_calls": 0, "unwrap_like_calls": 0, "panic_macros": 0, "unsafe_blocks": 0
         },
         "start": { "line": index * 100 + 1, "column": 1 },
         "end": { "line": index * 100 + sloc, "column": 2 },

@@ -49,7 +49,8 @@ fn over_limit_report(count: u32) -> Report {
                 "name": format!("Big{index:02}"),
                 "structural_signals": {
                     "flat_guards": 0, "field_mappings": 0,
-                    "nested_branches": 0, "assertion_like_calls": 0
+                    "nested_branches": 0, "assertion_like_calls": 0,
+            "clone_like_calls": 0, "unwrap_like_calls": 0, "panic_macros": 0, "unsafe_blocks": 0
                 },
                 "start": { "line": 3, "column": 1 },
                 "end": { "line": 40 + index, "column": 2 },
@@ -121,13 +122,13 @@ fn markdown_report_has_the_verdict_worklist_and_footer() {
             "| 2 | **complex** Big00",
             "`pkg/f01.go:3`",
             "### Where it concentrates",
-            "<!-- deburr report schema 3 -->",
+            "<!-- deburr report schema 4 -->",
         ],
     );
     assert!(
         output
             .trim_end()
-            .ends_with("deburr 1.0.0 · abc123 <!-- deburr report schema 3 -->"),
+            .ends_with("deburr 1.0.0 · abc123 <!-- deburr report schema 4 -->"),
         "footer names version, commit, and schema:\n{output}"
     );
     assert!(!output.contains("<details>"), "two items fit in the table");

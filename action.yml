@@ -1,5 +1,5 @@
 name: Deburr
-description: Run the Deburr Go and TypeScript analyzer and write a report for a path.
+description: Run the Deburr Go, TypeScript, and Rust analyzer and write a report for a path.
 author: Kellen Miller
 
 inputs:

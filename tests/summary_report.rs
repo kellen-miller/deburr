@@ -542,9 +542,9 @@ fn parse_failures_become_a_hint() {
     let mut report = base_report();
     report.files = serde_json::from_value(json!([
         { "path": "broken.go", "category": "production", "status": "parse_error",
-          "error": "syntax error", "bytes": 1, "lines": 1, "code_lines": 1 },
+          "error": "syntax error", "bytes": 1, "lines": 1, "code_lines": 1, "inline_test_code_lines": 0 },
         { "path": "ok.go", "category": "production", "status": "analyzed",
-          "bytes": 1, "lines": 1, "code_lines": 1 }
+          "bytes": 1, "lines": 1, "code_lines": 1, "inline_test_code_lines": 0 }
     ]))
     .expect("files");
 
@@ -644,9 +644,9 @@ fn concentration_ranks_production_directories_by_weight() {
     let mut report = base_report();
     report.files = serde_json::from_value(json!([
         { "path": "heavy/a.go", "category": "production", "status": "analyzed",
-          "bytes": 1, "lines": 500, "code_lines": 400 },
+          "bytes": 1, "lines": 500, "code_lines": 400, "inline_test_code_lines": 0 },
         { "path": "light/a.go", "category": "production", "status": "analyzed",
-          "bytes": 1, "lines": 50, "code_lines": 40 }
+          "bytes": 1, "lines": 50, "code_lines": 40, "inline_test_code_lines": 0 }
     ]))
     .expect("files");
     report.functions = vec![

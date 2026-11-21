@@ -2,7 +2,7 @@
 
 Find the rough edges that accumulate as code evolves.
 
-Deburr is a deterministic code-quality CLI for Go and TypeScript. It reports
+Deburr is a deterministic code-quality CLI for Go, TypeScript, and Rust. It reports
 function metrics, complexity, nesting, branch findings, and copy-pasted code
 with source locations, so developers, coding agents, and CI can see where code
 has grown hard to follow. Every result is tied to the same function
@@ -12,18 +12,23 @@ does not use models, rewrite files, or produce a composite quality score.
 Deburr is a single Rust binary. Clone detection is built in; there is nothing
 else to install.
 
-**Status:** `1.0.0` rewrote Deburr in Rust. Reports use schema `3` and
-analyzer `deburr` `1.0.0`; they are not comparable with reports from the Go
-versions. See [Changes from the Go version](#changes-from-the-go-version).
+**Status:** `1.0.0` rewrote Deburr in Rust. Reports now use schema `4`, which
+added Rust analysis; they are not comparable with reports from the Go versions
+or from earlier Rust releases. Each report records the analyzer version of the
+binary that wrote it. See
+[Changes from the Go version](#changes-from-the-go-version).
 
 ## What it analyzes
 
-- Go and TypeScript: `.go`, `.ts`, `.tsx`, `.mts`, `.cts`.
+- Go, TypeScript, and Rust: `.go`, `.ts`, `.tsx`, `.mts`, `.cts`, `.rs`.
 - Parser-only analysis with tree-sitter, including files excluded by build
   constraints. No type-checking, import resolution, or execution of target
   code.
 - Tests are analyzed separately from production code. `vendor`, generated
   files, and `testdata` are excluded by default.
+- Rust: files under a `tests` or `benches` directory are tests, and inline
+  test code is split out of production files at function level (see
+  [Rust](#rust)). Cargo's `target/` output directory is skipped.
 - Coverage reports what was analyzed, excluded, unsupported, or unparsed.
 - JavaScript and framework component files are not supported.
 
@@ -116,8 +121,8 @@ the output shows locations only and says why on stderr.
 
 ### Baselines and versions
 
-Reports record the analyzer identity (`deburr` `1.0.0`, report schema `3`) and
-the settings used, including the clone detection settings. `deburr --version`
+Reports record the analyzer identity (`deburr` and its version, report schema
+`4`) and the settings used, including the clone detection settings. `deburr --version`
 prints the version of the binary. Changes to the analyzer version or to
 measurement settings make reports incompatible, and `deburr compare` says so
 instead of drawing a conclusion. Rerun the baseline with the same version and
@@ -134,12 +139,63 @@ deburr review apply /tmp/deburr-before.json --ledger /tmp/deburr-review.json \
   --format html --output /tmp/deburr-reviewed.html
 ```
 
+## Rust
+
+Rust files get the same measurements as Go and TypeScript: function metrics,
+`nested_branches`, both findings (`redundant-boolean-return` and
+`duplicate-branches`), and clones, all on the same function identities. Rust
+function IDs read `rust/<path>::<name>`, with names that follow rustc paths:
+`module::function`, `Type::method` in an inherent `impl`,
+`<Type as Trait>::method` in a trait `impl`, `Trait::method` for a default
+body in a trait, and `parent::{closure#N}` for closures. Generic arguments are
+dropped from type and trait names.
+
+Four structural signals count ownership and panic hazards per function. Go and
+TypeScript always report zero for them.
+
+| Signal | Counts |
+| --- | --- |
+| `clone_like_calls` | `.clone()`, `.to_owned()`, `.cloned()` with no arguments |
+| `unwrap_like_calls` | `.unwrap()`, `.unwrap_unchecked()`, `.unwrap_err()` with no arguments; `.expect(..)`, `.expect_err(..)` with one |
+| `panic_macros` | `panic!`, `todo!`, `unimplemented!`, `unreachable!`, by the last segment of the macro path (`std::panic!` counts) |
+| `unsafe_blocks` | `unsafe { .. }` blocks |
+
+A signal inside a nested function or closure counts for that function only.
+The signals are syntactic: Deburr does not resolve types, so `.clone()` on an
+`Rc` counts like any other.
+
+**Inline tests.** Items under `#[cfg(test)]` (including `cfg(all(test, ..))`
+and `cfg(any(test, ..))`, never under `not(..)`) and functions with an
+attribute whose path ends in `test` (`#[test]`, `#[tokio::test]`,
+`#[sqlx::test]`) are test code. Their functions have category `test` and their
+code lines count toward the test totals, while the file stays `production` in
+coverage. Each file's `inline_test_code_lines` field carries the test share.
+With `--exclude-tests`, inline test functions, findings, and lines are dropped
+from the report, and the file itself stays analyzed.
+
+**Cyclomatic complexity** starts at 1 and adds one for each `if` (including
+`if let` and `else if`), `while` (including `while let`), `for`, `match` arm
+other than a bare `_`, match guard (on top of its arm), `let ... else`, `&&`
+and `||` (including each `&&` in an `if let` chain), and `?`. `loop` adds
+nesting only. Unlike TypeScript, an `else if` does not nest deeper than the
+`if` that heads its chain.
+
+**Known limitation: macros.** tree-sitter does not parse the inside of macro
+bodies. Code in `macro_rules!` definitions and in macro invocation arguments
+(for example `tokio::select!` branches or `vec![x.clone()]`) is not measured:
+no complexity, signals, or findings come from it. The invocation itself is
+still seen, so `panic!(..)` counts as a `panic_macros` hit.
+
+A Rust file that fails to parse is reported as a parse error, like any other
+language.
+
 ## Duplication
 
 Every audit looks for clones: repeated runs of code tokens in the files Deburr
 analyzes. Production code and test code are searched as separate groups, so a
 clone never pairs production code with a test, and each group gets its own
-percentage. Nothing outside the analyzed files is read.
+percentage. Inline Rust tests join the test group, so they never pair with the
+production code of their own file either. Nothing outside the analyzed files is read.
 
 - `--min-clone-tokens N` (default 80) sets the shortest clone, in tokens.
 - `--min-clone-lines N` (default 8) sets the shortest clone, in code lines. A
@@ -234,8 +290,9 @@ analyzer errors, not on findings alone. The artifact upload uses
   `--duplicates-config`, and `--enforce-duplicates-threshold`, and the matching
   Action inputs, are removed. Deburr no longer measures a threshold; it
   reports measurements.
-- Reports use schema `3` and analyzer version `1.0.0`. `deburr compare`
-  refuses to compare them with earlier reports.
+- Reports use schema `4` and the analyzer version of the release that wrote
+  them. `deburr compare` refuses to compare them with earlier reports.
+- Rust is analyzed, which the Go version never did. See [Rust](#rust).
 - Findings compare branch bodies by code tokens rather than printed layout, so
   layout and comments never make two branches differ.
 

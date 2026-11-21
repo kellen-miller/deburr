@@ -56,6 +56,8 @@ pub static RULES: LanguageRules = LanguageRules {
         // `switch_default` is a different kind and adds nothing.
         "switch_case",
     ],
+    decision_weight: None,
+    test_regions: None,
     nesting_kinds: &[
         "if_statement",
         "for_statement",
@@ -66,12 +68,13 @@ pub static RULES: LanguageRules = LanguageRules {
         "ternary_expression",
         "switch_statement",
     ],
+    chained_branch: None,
     binary_kind: "binary_expression",
     short_circuit_operators: &["&&", "||", "??"],
     naming: UnitNaming::Lexical { name: lexical_name },
     package_name,
     statements: StatementRules {
-        comment_kind: "comment",
+        comment_kinds: &["comment"],
         block_kind: "statement_block",
         statement_list_kind: None,
         if_kind: "if_statement",
@@ -79,10 +82,12 @@ pub static RULES: LanguageRules = LanguageRules {
     },
     // TypeScript has no flat-guard, field-mapping, or assertion signals.
     signals: None,
+    ownership: None,
     findings: FindingRules {
         shape: BranchShape::Conditional {
             else_kind: "else_clause",
             parenthesized_kind: "parenthesized_expression",
+            statement_kind: None,
         },
         true_kind: "true",
         false_kind: "false",

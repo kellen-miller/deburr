@@ -157,7 +157,7 @@ fn html_escapes_report_text_in_the_page_and_the_embedded_json() {
 
     let json = embedded(&output, "deburr-report");
 
-    assert_eq!(json["schema_version"], "3");
+    assert_eq!(json["schema_version"], "4");
     assert_eq!(json["functions"][0]["name"], "</script><b>x");
     assert_eq!(json["findings"][0]["message"], "</script><i>y");
 }
@@ -388,7 +388,7 @@ fn html_comparison_leads_with_the_verdict_and_escapes_values() {
 
     let json = embedded(&output, "deburr-comparison");
 
-    assert_eq!(json["schema_version"], "3");
+    assert_eq!(json["schema_version"], "4");
     assert_eq!(json["function_changes"][0]["after"]["name"], "Resolved<b>");
 }
 

@@ -1,6 +1,6 @@
 ---
 name: deburr
-description: Use when deterministic Deburr evidence is needed to review or clean up Go or TypeScript code while preserving behavior.
+description: Use when deterministic Deburr evidence is needed to review or clean up Go, TypeScript, or Rust code while preserving behavior.
 ---
 
 # Deburr

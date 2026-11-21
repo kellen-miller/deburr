@@ -32,6 +32,8 @@ pub static RULES: LanguageRules = LanguageRules {
         "type_case",
         "communication_case",
     ],
+    decision_weight: None,
+    test_regions: None,
     nesting_kinds: &[
         "if_statement",
         "for_statement",
@@ -39,12 +41,13 @@ pub static RULES: LanguageRules = LanguageRules {
         "type_switch_statement",
         "select_statement",
     ],
+    chained_branch: None,
     binary_kind: "binary_expression",
     short_circuit_operators: &["&&", "||"],
     naming: UnitNaming::Positional { declared_name },
     package_name,
     statements: StatementRules {
-        comment_kind: "comment",
+        comment_kinds: &["comment"],
         block_kind: "block",
         statement_list_kind: Some("statement_list"),
         if_kind: "if_statement",
@@ -78,6 +81,7 @@ pub static RULES: LanguageRules = LanguageRules {
         testing_receivers: &["t", "tb", "tt", "test", "testingt"],
         testing_methods: &["error", "errorf", "fatal", "fatalf", "fail", "failnow"],
     }),
+    ownership: None,
     findings: FindingRules {
         shape: BranchShape::Sequenced {
             redundant_owner_kinds: &["function_declaration", "method_declaration"],
