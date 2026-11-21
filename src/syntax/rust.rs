@@ -428,11 +428,51 @@ fn without_type_arguments(ty: Node<'_>, source: &[u8]) -> String {
 
     text.push_str(&String::from_utf8_lossy(&source[at..ty.end_byte()]));
 
-    text.split_whitespace()
+    let spaced = text
+        .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ")
         .replace(" ::", "::")
         .replace(":: ", "::")
+        .replace("( ", "(")
+        .replace(" )", ")")
+        .replace("[ ", "[")
+        .replace(" ]", "]")
+        .replace(" ,", ",");
+
+    without_layout_commas(&spaced)
+}
+
+/// Drops the trailing comma rustfmt adds to a multi-line tuple, so
+/// `(A, B,)` and `(A, B)` name the same type. A one-element tuple keeps its
+/// comma, because `(A,)` and `(A)` are different types.
+fn without_layout_commas(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    // Top-level comma count of each open parenthesis.
+    let mut commas: Vec<usize> = Vec::new();
+
+    for ch in text.chars() {
+        match ch {
+            '(' => commas.push(0),
+            ',' => {
+                if let Some(count) = commas.last_mut() {
+                    *count += 1;
+                }
+            }
+            ')' => {
+                let count = commas.pop().unwrap_or_default();
+
+                if count > 1 && out.ends_with(',') {
+                    out.pop();
+                }
+            }
+            _ => {}
+        }
+
+        out.push(ch);
+    }
+
+    out
 }
 
 fn field_text(node: Node<'_>, field: &str, source: &[u8]) -> Option<String> {
