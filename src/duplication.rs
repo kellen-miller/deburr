@@ -260,21 +260,30 @@ fn region<'a>(file: usize, analyzed: &AnalyzedFile<'a>, fragment: &Fragment) -> 
             .max_by_key(|function| (function.start, Reverse(function.end)))
     };
 
-    let mut functions: Vec<String> = Vec::new();
+    // A function owns the region when it is the innermost function of a region
+    // token on a line after its own first line, or the region covers it
+    // whole. Tokens on a function's first line alone (a signature, or the
+    // `func` keyword that starts the next declaration) do not make an owner.
+    let mut owners: Vec<&Function> = Vec::new();
 
     for token in run.iter().filter(|token| !token.is_terminator()) {
         if let Some(function) = innermost(token.start)
-            && !functions.contains(&function.id)
+            && (token.start.line > function.start.line
+                || (start <= function.start && function.end <= end))
+            && !owners.iter().any(|owner| owner.id == function.id)
         {
-            functions.push(function.id.clone());
+            owners.push(function);
         }
     }
 
-    let scope = overlapping
+    // The scope is the innermost owner that holds the whole region, so it is
+    // always a listed function or the file.
+    let scope = owners
         .iter()
         .copied()
         .filter(|function| function.start <= start && end <= function.end)
         .max_by_key(|function| (function.start, Reverse(function.end)));
+    let functions: Vec<String> = owners.iter().map(|owner| owner.id.clone()).collect();
     let code_lines = (start.line..=end.line)
         .filter(|&line| analyzed.code_lines.get(line as usize - 1) == Some(&true))
         .count();
