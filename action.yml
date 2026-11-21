@@ -117,11 +117,20 @@ runs:
           CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER CARGO_BUILD_RUSTFLAGS \
           CARGO_BUILD_TARGET CARGO_BUILD_TARGET_DIR CARGO_TARGET_DIR
 
+        # Cargo is a native program and takes native paths; Git Bash's tar on
+        # Windows reads `D:` in a native path as a remote host, so the copy
+        # uses POSIX paths there.
         source_dir="$RUNNER_TEMP/deburr/source"
         target_dir="$RUNNER_TEMP/deburr/target"
+        action_tree="$ACTION_PATH"
+        if command -v cygpath >/dev/null 2>&1; then
+          source_dir=$(cygpath -u "$source_dir")
+          action_tree=$(cygpath -u "$ACTION_PATH")
+        fi
+
         rm -rf "$source_dir"
         mkdir -p "$source_dir"
-        tar -C "$ACTION_PATH" --exclude=.git --exclude=.cargo --exclude=target -cf - . \
+        tar -C "$action_tree" --exclude=.git --exclude=.cargo --exclude=target -cf - . \
           | tar -C "$source_dir" -xf -
 
         cd "$source_dir"
