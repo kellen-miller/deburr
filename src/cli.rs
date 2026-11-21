@@ -27,7 +27,7 @@ use crate::review::{self, ReviewError};
 #[command(
     name = "deburr",
     version = crate::VERSION,
-    about = "Deterministic cleanup evidence for Go and TypeScript code",
+    about = "Deterministic cleanup evidence for Go, TypeScript, and Rust code",
     subcommand_required = true
 )]
 struct Cli {
@@ -57,7 +57,7 @@ struct AuditArgs {
     /// Write the report to FILE instead of standard output
     #[arg(long, value_name = "FILE")]
     output: Option<PathBuf>,
-    /// Exclude test files
+    /// Exclude test files and inline Rust tests
     #[arg(long)]
     exclude_tests: bool,
     /// Include testdata directories
