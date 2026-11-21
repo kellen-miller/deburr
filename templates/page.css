@@ -70,7 +70,7 @@ pre.src { margin: 0; background: var(--sunk); border-radius: 8px; padding: 10px 
 pre.src .l { display: block; padding-right: 12px; white-space: pre }
 pre.src .l::before { content: attr(data-n); display: inline-block; width: 3.4em; padding-right: 1em; text-align: right; color: var(--muted); user-select: none }
 pre.src .l.d { background: var(--diff) }
-.note { margin: 6px 0 0; font-size: .82rem; color: var(--muted) }
+.note { margin: 6px 0 0; font-size: .82rem; color: var(--muted); overflow-wrap: anywhere }
 .more { font-size: .9rem }
 
 .tablebox { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 10px }
@@ -90,6 +90,7 @@ td.over { color: var(--cx); font-weight: 600 }
 .groups { display: flex; flex-direction: column; gap: 8px }
 .grp { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px }
 .grp summary { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; color: var(--fg); width: auto }
+.grp summary > * { min-width: 0; overflow-wrap: anywhere }
 .grp summary .n { margin-left: auto; color: var(--muted); font-size: .86rem }
 .grp ul { margin: 8px 0 2px; padding-left: 18px; font-size: .86rem }
 .grp ul li { overflow-wrap: anywhere }
