@@ -265,19 +265,32 @@ struct BucketTotals {
     high_complexity_mass: f64,
 }
 
+/// The code lines a removed analyzed file contributed to `bucket`. A
+/// production file's inline-test lines were counted in the test bucket, so
+/// they leave test, and only the rest leaves production.
+fn bucket_lines(file: &Value, bucket: &str) -> i64 {
+    let code_lines = file["code_lines"].as_i64().unwrap_or_default();
+    let inline_test = file["inline_test_code_lines"].as_i64().unwrap_or_default();
+
+    match (bucket, file["category"].as_str().unwrap_or_default()) {
+        ("all", _) | ("test", "test") => code_lines,
+        ("production", "production") => code_lines - inline_test,
+        ("test", "production") => inline_test,
+        _ => 0,
+    }
+}
+
 /// Rewrites the three metrics buckets of `report` for a report whose `.rs`
 /// files and functions were removed: code lines lose the removed analyzed
-/// files, and every function-derived total is recomputed from what is left.
+/// files' share of each bucket, and every function-derived total is
+/// recomputed from what is left.
 fn recompute_metrics(report: &mut Value, removed: &[Value]) {
     for bucket in ["all", "production", "test"] {
         let in_bucket = |category: &str| bucket == "all" || category == bucket;
         let removed_lines: i64 = removed
             .iter()
-            .filter(|file| {
-                file["status"] == "analyzed"
-                    && in_bucket(file["category"].as_str().unwrap_or_default())
-            })
-            .filter_map(|file| file["code_lines"].as_i64())
+            .filter(|file| file["status"] == "analyzed")
+            .map(|file| bucket_lines(file, bucket))
             .sum();
         let mut totals = BucketTotals::default();
 
@@ -668,6 +681,23 @@ mod tests {
                     "high_complexity_mass_share": null},
             },
         })
+    }
+
+    #[test]
+    fn inline_test_lines_leave_the_test_bucket() {
+        // `src/b.rs` holds 7 code lines, 2 of them inline tests: the Rust
+        // analyzer counted 5 in production and 2 in test, so removing the
+        // file takes 5 from production and 2 from test, leaving the Go file.
+        let mut report = mixed_report();
+        report["files"][1]["inline_test_code_lines"] = json!(2);
+        report["metrics"]["production"]["code_lines"] = json!(8);
+        report["metrics"]["test"]["code_lines"] = json!(2);
+
+        let filtered = without_rust(&report).expect("report has Rust files");
+
+        assert_eq!(filtered["metrics"]["all"]["code_lines"], json!(3));
+        assert_eq!(filtered["metrics"]["production"]["code_lines"], json!(3));
+        assert_eq!(filtered["metrics"]["test"]["code_lines"], json!(0));
     }
 
     #[test]
