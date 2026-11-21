@@ -172,6 +172,91 @@ fn a_run_spanning_two_functions_names_both() {
     assert_functions_resolve(&report);
 }
 
+/// A TypeScript function of `statements + 4` lines.
+fn ts_function(name: &str, statements: usize) -> String {
+    let body: String = (1..=statements)
+        .map(|index| format!("  total += x * {index};\n"))
+        .collect();
+
+    format!("function {name}(x: number): number {{\n  let total = 0;\n{body}  return total;\n}}\n")
+}
+
+/// The report's only clone ends on the keyword that opens the neighbor
+/// declaration, and each endpoint names just the function it copies.
+fn assert_clone_names_only(report: &Report, end_line: u32, owners: [&str; 2]) {
+    assert_eq!(report.duplication.clones.len(), 1);
+
+    for (endpoint, owner) in report.duplication.clones[0].endpoints.iter().zip(owners) {
+        assert_eq!(endpoint.end.line, end_line, "{}", endpoint.path);
+        assert_eq!(endpoint.functions, [owner], "{}", endpoint.path);
+    }
+
+    assert_functions_resolve(report);
+}
+
+#[test]
+fn a_go_run_ending_at_the_next_func_keyword_does_not_name_that_function() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let alpha = go_function("Alpha", 20);
+    write(
+        dir.path(),
+        "a.go",
+        &format!("package a\n\n{alpha}\nfunc Next() {{\n}}\n"),
+    );
+    write(
+        dir.path(),
+        "b.go",
+        &format!("package b\n\n{alpha}\nfunc Other() {{\n}}\n"),
+    );
+
+    let report = run_default(dir.path());
+
+    assert_clone_names_only(&report, 28, ["a/a.go::Alpha", "b/b.go::Alpha"]);
+}
+
+#[test]
+fn a_typescript_run_ending_at_the_next_function_keyword_does_not_name_it() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let alpha = ts_function("alpha", 20);
+    let (next, other) = ("function next() {\n}\n", "function other() {\n}\n");
+
+    write(dir.path(), "one.ts", &format!("{alpha}\n{next}"));
+    write(dir.path(), "two.ts", &format!("{alpha}\n{other}"));
+
+    let report = run_default(dir.path());
+
+    assert_clone_names_only(
+        &report,
+        26,
+        ["typescript/one.ts::alpha", "typescript/two.ts::alpha"],
+    );
+}
+
+#[test]
+fn a_run_covering_whole_one_line_functions_names_each_of_them() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let functions: String = (1..=10)
+        .map(|index| format!("function f{index}(x: number) {{ return x + {index}; }}\n"))
+        .collect();
+
+    write(dir.path(), "one.ts", &format!("{functions}const a = 1;\n"));
+    write(dir.path(), "two.ts", &format!("{functions}let b = 2;\n"));
+
+    let report = run_default(dir.path());
+
+    assert_eq!(report.duplication.clones.len(), 1);
+
+    for endpoint in &report.duplication.clones[0].endpoints {
+        for (index, id) in endpoint.functions.iter().enumerate() {
+            assert!(id.ends_with(&format!("::f{}", index + 1)), "{id}");
+        }
+
+        assert_eq!(endpoint.functions.len(), 10, "{}", endpoint.path);
+    }
+
+    assert_functions_resolve(&report);
+}
+
 #[test]
 fn a_run_of_only_imports_names_no_function() {
     let dir = tempfile::tempdir().expect("temp dir");
