@@ -6,10 +6,14 @@ use askama::Template;
 
 use super::code::{Code, Place};
 use super::{CSS, SOURCE_ITEMS, clone_minimum, embedded_json, working_tree};
-use crate::render::summary::{ChangeEntry, WorkKind, count, summarize_comparison};
+use crate::render::filters;
+use crate::render::summary::{
+    ChangeEntry, ComparisonSummary, WorkKind, count, summarize_comparison,
+};
 use crate::render::{Source, Style, enum_name};
 use crate::report::{
-    AnalyzerIdentity, Comparison, ConfigSummary, Coverage, Detail, DuplicationStatus, Provenance,
+    AnalyzerIdentity, Comparison, ConfigSummary, Coverage, Detail, DuplicationStatus, Location,
+    Provenance,
 };
 
 /// Entry results that mean the code no longer exists in the newer tree, so
@@ -17,13 +21,9 @@ use crate::report::{
 /// uses for removed functions, resolved findings, and removed clones.
 const GONE: [&str; 2] = ["gone", "removed"];
 
-struct EntryRow {
-    tone: &'static str,
-    label: &'static str,
-    title: String,
-    before: String,
-    after: String,
-    place: Option<Place>,
+/// A change entry with the newer source read for it.
+struct Entry<'a> {
+    entry: &'a ChangeEntry,
     block: Option<Code>,
 }
 
@@ -34,43 +34,74 @@ struct Side {
 
 #[derive(Template)]
 #[template(path = "comparison.html")]
-struct ComparisonPage {
+struct ComparisonPage<'a> {
     css: &'static str,
     json: String,
-    name: String,
-    before_commit: String,
-    after_commit: String,
-    tone: &'static str,
-    verdict: String,
-    conclusive: bool,
-    worse: Vec<EntryRow>,
-    better: Vec<EntryRow>,
-    source_capped: bool,
-    source_cap: usize,
-    unmatched: u32,
-    unmatched_sentence: String,
+    comparison: &'a Comparison,
+    source: &'a Source,
+    summary: &'a ComparisonSummary,
+    worse: Vec<Entry<'a>>,
+    better: Vec<Entry<'a>>,
     sides: Vec<Side>,
 }
 
+impl ComparisonPage<'_> {
+    /// Seven characters of the commit, or `unknown`.
+    fn short_commit(&self, provenance: &Provenance) -> String {
+        let commit: String = provenance.source.commit.chars().take(7).collect();
+
+        if commit.is_empty() {
+            "unknown".to_owned()
+        } else {
+            commit
+        }
+    }
+
+    fn tone(&self) -> &'static str {
+        if !self.summary.conclusive {
+            "off"
+        } else if self.summary.worse.is_empty() {
+            "ok"
+        } else {
+            "cx"
+        }
+    }
+
+    fn kind_tone(&self, kind: &WorkKind) -> &'static str {
+        match kind {
+            WorkKind::Finding => "bad",
+            WorkKind::Complex => "cx",
+            WorkKind::Copied => "dup",
+        }
+    }
+
+    fn kind_label(&self, kind: &WorkKind) -> &'static str {
+        match kind {
+            WorkKind::Finding => "Finding",
+            WorkKind::Complex => "Complex",
+            WorkKind::Copied => "Copied code",
+        }
+    }
+
+    fn place(&self, location: &Location) -> Place {
+        Place::new(self.source, location)
+    }
+
+    fn source_capped(&self) -> bool {
+        self.summary.worse.len() + self.summary.better.len() > SOURCE_ITEMS
+    }
+
+    fn source_cap(&self) -> usize {
+        SOURCE_ITEMS
+    }
+}
+
 /// One comparison entry. `shown` is how many entries already carry source.
-fn entry_row(entry: &ChangeEntry, shown: usize, source: &Source) -> EntryRow {
-    let (tone, label) = match entry.kind {
-        WorkKind::Finding => ("bad", "Finding"),
-        WorkKind::Complex => ("cx", "Complex"),
-        WorkKind::Copied => ("dup", "Copied code"),
-    };
+fn entry<'a>(entry: &'a ChangeEntry, shown: usize, source: &Source) -> Entry<'a> {
     let present = !GONE.contains(&entry.after.as_str());
 
-    EntryRow {
-        tone,
-        label,
-        title: entry.title.clone(),
-        before: entry.before.clone(),
-        after: entry.after.clone(),
-        place: entry
-            .location
-            .as_ref()
-            .map(|location| Place::new(source, location)),
+    Entry {
+        entry,
         block: entry
             .location
             .as_ref()
@@ -130,55 +161,25 @@ pub fn comparison(
     out: &mut dyn Write,
 ) -> io::Result<()> {
     let summary = summarize_comparison(comparison);
-    let worse: Vec<EntryRow> = summary
+    let worse: Vec<Entry> = summary
         .worse
         .iter()
         .enumerate()
-        .map(|(index, entry)| entry_row(entry, index, source))
+        .map(|(index, item)| entry(item, index, source))
         .collect();
-    let better: Vec<EntryRow> = summary
+    let better: Vec<Entry> = summary
         .better
         .iter()
         .enumerate()
-        .map(|(index, entry)| entry_row(entry, summary.worse.len() + index, source))
+        .map(|(index, item)| entry(item, summary.worse.len() + index, source))
         .collect();
-    let short = |provenance: &Provenance| {
-        let commit: String = provenance.source.commit.chars().take(7).collect();
-
-        if commit.is_empty() {
-            "unknown".to_owned()
-        } else {
-            commit
-        }
-    };
 
     let page = ComparisonPage {
         css: CSS,
         json: embedded_json(comparison)?,
-        name: source.name().to_owned(),
-        before_commit: short(&comparison.before_provenance),
-        after_commit: short(&comparison.after_provenance),
-        tone: if !summary.conclusive {
-            "off"
-        } else if summary.worse.is_empty() {
-            "ok"
-        } else {
-            "cx"
-        },
-        verdict: summary.verdict.clone(),
-        conclusive: summary.conclusive,
-        source_capped: summary.worse.len() + summary.better.len() > SOURCE_ITEMS,
-        source_cap: SOURCE_ITEMS,
-        unmatched: summary.unmatched,
-        unmatched_sentence: format!(
-            "{} {} could not be matched between the reports.",
-            count(summary.unmatched),
-            if summary.unmatched == 1 {
-                "item"
-            } else {
-                "items"
-            }
-        ),
+        comparison,
+        source,
+        summary: &summary,
         worse,
         better,
         sides: vec![

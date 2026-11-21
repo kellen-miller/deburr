@@ -1,0 +1,7 @@
+{%- macro loc(place) -%}
+{% if let Some(href) = place.href %}<a href="{{ href }}">{{ place.text }}</a>{% else %}{{ place.text }}{% endif %}
+{%- endmacro -%}
+
+{%- macro code(block) -%}
+<div><div class="cap">{{ block.caption }}</div><pre class="src">{% for line in block.lines %}<span class="l{% if line.differs %} d{% endif %}" data-n="{{ line.number }}">{{ line.text }}</span>{% endfor %}</pre>{% if let Some(clipped) = block.clipped %}<p class="note">{{ clipped }}</p>{% endif %}</div>
+{%- endmacro -%}

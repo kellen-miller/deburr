@@ -1,50 +1,49 @@
+{%- import "parts.html" as parts -%}
+{%- macro entries(list) -%}
+{% for entry in list %}
+    <li class="change">
+      <div class="item-top"><span class="chip {{ self.kind_tone(entry.entry.kind) }}">{{ self.kind_label(entry.entry.kind) }}</span><h3>{{ entry.entry.title }}</h3></div>
+      <div class="delta"><span>{{ entry.entry.before }}</span><span class="arrow">→</span><b>{{ entry.entry.after }}</b>{% if let Some(location) = entry.entry.location %}<span class="loc">{% call parts::loc(self.place(location)) %}{% endcall %}</span>{% endif %}</div>
+      {% if let Some(block) = entry.block %}<details class="code"><summary>Show code</summary><div class="pair one">{% call parts::code(block) %}{% endcall %}</div></details>{% endif %}
+    </li>{% endfor %}
+{%- endmacro -%}
 <!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>deburr comparison · {{ name }}</title>
+<title>deburr comparison · {{ source.name() }}</title>
 <style>{{ css|safe }}</style>
 </head>
 <body>
 <div class="wrap">
 <header class="rhead">
-  <h1>{{ name }}</h1>
-  <div class="meta"><span class="num">{{ before_commit }} → {{ after_commit }}</span></div>
+  <h1>{{ source.name() }}</h1>
+  <div class="meta"><span class="num">{{ self.short_commit(comparison.before_provenance) }} → {{ self.short_commit(comparison.after_provenance) }}</span></div>
 </header>
 
 <div class="verdict">
-  <div class="tile"><div class="k"><span class="dot {{ tone }}"></span><span class="eyebrow">This comparison</span></div><div class="big num">{{ verdict }}</div></div>
+  <div class="tile"><div class="k"><span class="dot {{ self.tone() }}"></span><span class="eyebrow">This comparison</span></div><div class="big num">{{ summary.verdict }}</div></div>
 </div>
 
-{% if !conclusive %}<div class="hint err"><span class="dot bad"></span><div>The two reports cannot support a conclusion, so nothing is listed as better or worse.</div></div>{% endif %}
+{% if !summary.conclusive %}<div class="hint err"><span class="dot bad"></span><div>The two reports cannot support a conclusion, so nothing is listed as better or worse.</div></div>{% endif %}
 
-{% if conclusive %}
+{% if summary.conclusive %}
 <section>
-  <div class="sec-head"><h2>Got worse ({{ worse.len() }})</h2><p>New or growing problems. Source is from the newer tree.</p></div>
-  {% if worse.is_empty() %}<p class="muted">Nothing got worse.</p>{% else %}<ul class="changes">{% for entry in worse %}
-    <li class="change">
-      <div class="item-top"><span class="chip {{ entry.tone }}">{{ entry.label }}</span><h3>{{ entry.title }}</h3></div>
-      <div class="delta"><span>{{ entry.before }}</span><span class="arrow">→</span><b>{{ entry.after }}</b>{% if let Some(place) = entry.place %}<span class="loc">{% if let Some(href) = place.href %}<a href="{{ href }}">{{ place.text }}</a>{% else %}{{ place.text }}{% endif %}</span>{% endif %}</div>
-      {% if let Some(block) = entry.block %}<details class="code"><summary>Show code</summary><div class="pair one"><div><div class="cap">{{ block.caption }}</div><pre class="src">{% for line in block.lines %}<span class="l" data-n="{{ line.number }}">{{ line.text }}</span>{% endfor %}</pre>{% if let Some(clipped) = block.clipped %}<p class="note">{{ clipped }}</p>{% endif %}</div></div></details>{% endif %}
-    </li>{% endfor %}
+  <div class="sec-head"><h2>Got worse ({{ summary.worse.len() }})</h2><p>New or growing problems. Source is from the newer tree.</p></div>
+  {% if summary.worse.is_empty() %}<p class="muted">Nothing got worse.</p>{% else %}<ul class="changes">{% call entries(worse) %}{% endcall %}
   </ul>{% endif %}
 </section>
 
 <section>
-  <div class="sec-head"><h2>Improved ({{ better.len() }})</h2><p>Problems that went away or shrank.</p></div>
-  {% if better.is_empty() %}<p class="muted">Nothing improved.</p>{% else %}<ul class="changes">{% for entry in better %}
-    <li class="change">
-      <div class="item-top"><span class="chip {{ entry.tone }}">{{ entry.label }}</span><h3>{{ entry.title }}</h3></div>
-      <div class="delta"><span>{{ entry.before }}</span><span class="arrow">→</span><b>{{ entry.after }}</b>{% if let Some(place) = entry.place %}<span class="loc">{% if let Some(href) = place.href %}<a href="{{ href }}">{{ place.text }}</a>{% else %}{{ place.text }}{% endif %}</span>{% endif %}</div>
-      {% if let Some(block) = entry.block %}<details class="code"><summary>Show code</summary><div class="pair one"><div><div class="cap">{{ block.caption }}</div><pre class="src">{% for line in block.lines %}<span class="l" data-n="{{ line.number }}">{{ line.text }}</span>{% endfor %}</pre>{% if let Some(clipped) = block.clipped %}<p class="note">{{ clipped }}</p>{% endif %}</div></div></details>{% endif %}
-    </li>{% endfor %}
+  <div class="sec-head"><h2>Improved ({{ summary.better.len() }})</h2><p>Problems that went away or shrank.</p></div>
+  {% if summary.better.is_empty() %}<p class="muted">Nothing improved.</p>{% else %}<ul class="changes">{% call entries(better) %}{% endcall %}
   </ul>{% endif %}
-  {% if source_capped %}<p class="note">Source shown for the first {{ source_cap }} entries.</p>{% endif %}
+  {% if self.source_capped() %}<p class="note">Source shown for the first {{ self.source_cap() }} entries.</p>{% endif %}
 </section>
 {% endif %}
 
-{% if unmatched > 0 %}<p class="muted">{{ unmatched_sentence }}</p>{% endif %}
+{% if summary.unmatched > 0 %}<p class="muted">{{ summary.unmatched|count }} {% if summary.unmatched == 1 %}item{% else %}items{% endif %} could not be matched between the reports.</p>{% endif %}
 
 <details class="audit">
   <summary>Audit details</summary>

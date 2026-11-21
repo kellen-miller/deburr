@@ -14,6 +14,8 @@ use serde::Serialize;
 
 use crate::report::{Comparison, Report};
 
+#[doc(hidden)]
+pub mod filters;
 pub mod github;
 pub mod html;
 pub mod markdown;
