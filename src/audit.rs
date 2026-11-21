@@ -5,7 +5,7 @@ use std::path::Path;
 
 use rayon::prelude::*;
 
-use crate::analysis;
+use crate::analysis::{self, FunctionBody};
 use crate::discover::{self, DiscoveredFile, Discovery};
 use crate::duplication::{self, AnalyzedFile, DuplicationError, DuplicationSettings};
 use crate::identity::{self, ManifestEntry};
@@ -55,6 +55,7 @@ struct FileOutcome {
     file: File,
     source: Vec<u8>,
     functions: Vec<Function>,
+    bodies: Vec<FunctionBody>,
     findings: Vec<Finding>,
     /// What clone detection needs, kept only for analyzed production and test
     /// files when duplication is requested (the syntax tree is dropped).
@@ -271,6 +272,7 @@ fn analyze_file(discovered: DiscoveredFile, keep_tokens: bool) -> FileOutcome {
         },
         source: Vec::new(),
         functions: Vec::new(),
+        bodies: Vec::new(),
         findings: Vec::new(),
         language: None,
         tokens: Vec::new(),
@@ -307,6 +309,7 @@ fn analyze_file(discovered: DiscoveredFile, keep_tokens: bool) -> FileOutcome {
                 let analysis =
                     analysis::analyze(&outcome.file.path, outcome.file.category, &parsed);
                 outcome.functions = analysis.functions;
+                outcome.bodies = analysis.bodies;
                 outcome.findings = analysis.findings;
 
                 analysis.code_lines
@@ -368,6 +371,7 @@ fn measure_duplication(
                     tokens: &outcome.tokens,
                     code_lines: &outcome.code_lines,
                     functions: &outcome.functions,
+                    bodies: &outcome.bodies,
                 })
             })
             .collect();

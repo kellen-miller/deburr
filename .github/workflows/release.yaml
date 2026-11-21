@@ -7,8 +7,9 @@ name: Release
 # release (GitHub creates the tag only when the draft is published): create the
 # draft, upload every asset, download them back and verify the checksums, and
 # only then publish. A failure before publishing deletes the draft; a failed
-# install from the real download URL after publishing turns the release back
-# into a draft. A manual dry run performs the assembly and verification but
+# install from the real download URL after publishing deletes the release and
+# its tag, so a re-run starts clean. A manual dry run performs the assembly and
+# verification but
 # creates nothing.
 
 on:
@@ -189,7 +190,8 @@ jobs:
         working-directory: dist
         run: |
           set -euo pipefail
-          test "$(ls | wc -l)" -eq 5
+          archives=(deburr-*)
+          test "${#archives[@]}" -eq 5
           sha256sum deburr-* > SHA256SUMS
           cat SHA256SUMS
 
@@ -313,9 +315,17 @@ jobs:
           done
 
           if [[ "$ok" != true ]]; then
-            printf '::error::release %s failed the post-publish install check; re-drafting it\n' "$RELEASE_TAG"
-            gh release edit "$RELEASE_TAG" --repo "$REPOSITORY" --draft=true
-            printf '::error::%s is back to a draft. The tag %s still points at %s: delete the draft and the tag, then re-run this workflow.\n' \
-              "$RELEASE_TAG" "$RELEASE_TAG" "$RELEASE_SHA"
+            # Remove the release and its tag together, so no tag without
+            # downloadable assets is left for tagged Action callers and a
+            # re-run starts clean. Only a tag that points at this run's commit
+            # is deleted.
+            printf '::error::release %s failed the post-publish install check; removing it\n' "$RELEASE_TAG"
+            tagged=$(gh api "repos/$REPOSITORY/commits/$RELEASE_TAG" --jq .sha || true)
+            if [[ "$tagged" == "$RELEASE_SHA" ]]; then
+              gh release delete "$RELEASE_TAG" --repo "$REPOSITORY" --cleanup-tag --yes
+            else
+              printf '::error::tag %s points at %s, not %s; leaving it for manual inspection\n' \
+                "$RELEASE_TAG" "${tagged:-nothing}" "$RELEASE_SHA"
+            fi
             exit 1
           fi

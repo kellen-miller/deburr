@@ -73,10 +73,10 @@ without verified assets:
    against that copy, and only then runs `gh release edit --draft=false`.
 5. Any failure or cancellation before publishing deletes the draft.
 6. After publishing, the job runs `scripts/install-deburr.sh` against the real
-   HTTPS download URL (with a few retries for CDN lag). If that fails, the
-   release is turned back into a draft (`gh release edit --draft=true`) and the
-   job fails with a message. The tag stays at the released commit, so delete the
-   draft and the tag before re-running.
+   HTTPS download URL (with a few retries for CDN lag). If that fails, the job
+   deletes the release together with its tag (only when the tag points at this
+   run's commit) and fails, so no tag is left without downloadable assets and a
+   re-run starts clean.
 
 An existing tag or published release for the version stops the job before
 anything is created; a leftover draft from an interrupted run is replaced.

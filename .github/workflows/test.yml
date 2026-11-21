@@ -208,6 +208,10 @@ jobs:
             printf "rustc-wrapper = '%s/hostile-wrapper.sh'\n" "$GITHUB_WORKSPACE"
             printf "target-dir = 'hostile-target'\n"
           } > .cargo/config.toml
+          # A caller can also point CARGO_HOME into the workspace, whose
+          # config.toml Cargo reads from any working directory.
+          mkdir -p hostile-cargo-home
+          cp .cargo/config.toml hostile-cargo-home/config.toml
           cat .cargo/config.toml
 
       - name: Audit with the hostile configuration present
@@ -217,6 +221,7 @@ jobs:
           RUSTC_WRAPPER: ${{ github.workspace }}/hostile-wrapper.sh
           CARGO_BUILD_TARGET: bogus-unknown-nothing
           CARGO_TARGET_DIR: ${{ github.workspace }}/hostile-target
+          CARGO_HOME: ${{ github.workspace }}/hostile-cargo-home
         with:
           path: tests/corpus/dup
           format: json

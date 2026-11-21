@@ -25,9 +25,19 @@ pub const DUPLICATE_BRANCHES: &str = "duplicate-branches";
 #[derive(Debug, Default)]
 pub struct FileAnalysis {
     pub functions: Vec<Function>,
+    /// The byte range of each function's body, keyed by function ID, so clone
+    /// detection can tell body code from a signature line.
+    pub bodies: Vec<FunctionBody>,
     pub findings: Vec<Finding>,
     /// Index `n - 1` is true when line `n` holds code.
     pub code_lines: Vec<bool>,
+}
+
+/// Where one function's body sits in the source.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FunctionBody {
+    pub function_id: String,
+    pub bytes: std::ops::Range<usize>,
 }
 
 /// One discovered function unit and what has been measured so far.
@@ -117,6 +127,7 @@ pub fn analyze(path: &str, category: Category, syntax: &Syntax) -> FileAnalysis 
     let package = (rules.package_name)(syntax.tree.root_node(), &syntax.source);
     let mut findings = Vec::new();
     let mut functions = Vec::with_capacity(units.len());
+    let mut bodies = Vec::with_capacity(units.len());
 
     for (unit, identity) in units.into_iter().zip(identities) {
         let mut occurrences: HashMap<&str, usize> = HashMap::new();
@@ -154,8 +165,17 @@ pub fn analyze(path: &str, category: Category, syntax: &Syntax) -> FileAnalysis 
             f64::from(unit.complexity.cyclomatic) * f64::from(unit.sloc).sqrt()
         };
 
+        let id = identity::function_id(&package, path, &identity.name);
+
+        bodies.push(FunctionBody {
+            function_id: id.clone(),
+            bytes: unit
+                .node
+                .child_by_field_name("body")
+                .map_or_else(|| unit.node.byte_range(), |body| body.byte_range()),
+        });
         functions.push(Function {
-            id: identity::function_id(&package, path, &identity.name),
+            id,
             fingerprint: unit.fingerprint,
             path: path.to_owned(),
             category,
@@ -174,6 +194,7 @@ pub fn analyze(path: &str, category: Category, syntax: &Syntax) -> FileAnalysis 
 
     FileAnalysis {
         functions,
+        bodies,
         findings,
         code_lines,
     }

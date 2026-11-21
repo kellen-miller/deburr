@@ -105,7 +105,13 @@ runs:
         # audited repository could redirect the output or run its code. Build
         # a copy of the Action's source under RUNNER_TEMP (outside the
         # workspace and without any .cargo directory), and clear the
-        # environment overrides that do the same.
+        # environment overrides that do the same. CARGO_HOME is replaced with
+        # a fresh directory too, because Cargo reads $CARGO_HOME/config.toml
+        # regardless of the working directory and a caller may point it into
+        # the workspace.
+        export CARGO_HOME="$RUNNER_TEMP/deburr/cargo-home"
+        rm -rf "$CARGO_HOME"
+        mkdir -p "$CARGO_HOME"
         unset RUSTC RUSTC_WRAPPER RUSTC_WORKSPACE_WRAPPER RUSTFLAGS \
           CARGO_ENCODED_RUSTFLAGS CARGO_BUILD_RUSTC CARGO_BUILD_RUSTC_WRAPPER \
           CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER CARGO_BUILD_RUSTFLAGS \

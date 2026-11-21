@@ -6,13 +6,13 @@
 //! computed here from deburr's own line map and function table, never from
 //! the detector's line arithmetic.
 
-use std::cmp::Reverse;
 use std::collections::HashMap;
 
 use cpd_core::detect::{PathFilters, PreparedSource, detect_prepared};
 use cpd_core::hash::token_hash;
 use cpd_core::models::{DetectionToken, Fragment, Location};
 
+use crate::analysis::FunctionBody;
 use crate::identity::{self, CloneEndpointSketch};
 use crate::report::{Category, CloneEndpoint, CodeClone, DuplicationCategory, Function, Position};
 use crate::syntax::{Language, Token};
@@ -35,6 +35,8 @@ pub struct AnalyzedFile<'a> {
     pub code_lines: &'a [bool],
     /// The file's functions as reported, so clone endpoints can name them.
     pub functions: &'a [Function],
+    /// Each function's body bytes, keyed by function ID.
+    pub bodies: &'a [FunctionBody],
 }
 
 /// The measurement and clones for one category.
@@ -247,42 +249,51 @@ fn region<'a>(file: usize, analyzed: &AnalyzedFile<'a>, fragment: &Fragment) -> 
     let run = &run[first..=last];
     let (start, end) = (run[0].start, run[run.len() - 1].end);
 
-    let overlapping: Vec<&Function> = analyzed
-        .functions
+    // A function owns the region when a region token lies inside its body
+    // (innermost body wins). Signature tokens, or the `func` keyword that
+    // starts the next declaration, are outside every body they precede, so
+    // they never make an owner; a one-line function whose body the clone
+    // only partly covers still does.
+    let (first_byte, last_byte) = (run[0].bytes.start, run[run.len() - 1].bytes.end);
+    let bodies: Vec<(&Function, &FunctionBody)> = analyzed
+        .bodies
         .iter()
-        .filter(|function| function.start <= end && function.end >= start)
+        .filter(|body| body.bytes.start < last_byte && first_byte < body.bytes.end)
+        .filter_map(|body| {
+            analyzed
+                .functions
+                .iter()
+                .find(|function| function.id == body.function_id)
+                .map(|function| (function, body))
+        })
         .collect();
-    let innermost = |position: Position| {
-        overlapping
+    let innermost = |byte: usize| {
+        bodies
             .iter()
+            .filter(|(_, body)| body.bytes.contains(&byte))
+            .min_by_key(|(_, body)| body.bytes.len())
             .copied()
-            .filter(|function| function.start <= position && position <= function.end)
-            .max_by_key(|function| (function.start, Reverse(function.end)))
     };
 
-    // A function owns the region when it is the innermost function of a region
-    // token on a line after its own first line, or the region covers it
-    // whole. Tokens on a function's first line alone (a signature, or the
-    // `func` keyword that starts the next declaration) do not make an owner.
-    let mut owners: Vec<&Function> = Vec::new();
+    let mut owners: Vec<(&Function, &FunctionBody)> = Vec::new();
 
     for token in run.iter().filter(|token| !token.is_terminator()) {
-        if let Some(function) = innermost(token.start)
-            && (token.start.line > function.start.line
-                || (start <= function.start && function.end <= end))
-            && !owners.iter().any(|owner| owner.id == function.id)
+        if let Some(owner) = innermost(token.bytes.start)
+            && !owners.iter().any(|(known, _)| known.id == owner.0.id)
         {
-            owners.push(function);
+            owners.push(owner);
         }
     }
 
-    // The scope is the innermost owner that holds the whole region, so it is
-    // always a listed function or the file.
+    let owners: Vec<&Function> = owners.into_iter().map(|(function, _)| function).collect();
+    // The scope is the innermost owner whose declaration holds the whole
+    // region (a clone of a whole function starts at its keyword, outside the
+    // body), so it is always a listed function or the file.
     let scope = owners
         .iter()
         .copied()
         .filter(|function| function.start <= start && end <= function.end)
-        .max_by_key(|function| (function.start, Reverse(function.end)));
+        .max_by_key(|function| (function.start, std::cmp::Reverse(function.end)));
     let functions: Vec<String> = owners.iter().map(|owner| owner.id.clone()).collect();
     let code_lines = (start.line..=end.line)
         .filter(|&line| analyzed.code_lines.get(line as usize - 1) == Some(&true))
