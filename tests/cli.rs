@@ -132,9 +132,9 @@ fn audit_output_outside_tree_is_accepted_by_validation() {
         target.to_str().expect("utf-8 path"),
     ]);
 
-    // Not rejected as a usage error; the stub audit still reports failure.
-    assert_eq!(code(&output), 1);
-    assert!(stderr(&output).contains("not implemented yet"));
+    // Not rejected as a usage error: the report is written to the target.
+    assert_eq!(code(&output), 0, "stderr: {}", stderr(&output));
+    assert!(target.is_file(), "report must be written outside the tree");
 
     let leftovers: Vec<_> = fs::read_dir(elsewhere.path())
         .expect("read dir")
@@ -149,7 +149,7 @@ fn audit_output_outside_tree_is_accepted_by_validation() {
 }
 
 #[test]
-fn audit_writes_json_report_to_stdout_then_fails_until_implemented() {
+fn audit_writes_json_report_to_stdout() {
     let tree = tempfile::tempdir().expect("tempdir");
     let output = deburr(&[
         "audit",
@@ -160,8 +160,7 @@ fn audit_writes_json_report_to_stdout_then_fails_until_implemented() {
     ]);
     let stdout = String::from_utf8_lossy(&output.stdout);
 
-    assert_eq!(code(&output), 1);
-    assert!(stderr(&output).contains("not implemented yet"));
+    assert_eq!(code(&output), 0, "stderr: {}", stderr(&output));
     assert!(stdout.ends_with("}\n"));
     assert!(stdout.contains("\"schema_version\": \"3\""));
 }

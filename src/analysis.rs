@@ -12,8 +12,13 @@ pub struct FileAnalysis {
     pub code_lines: Vec<bool>,
 }
 
-/// Analyzes one parsed file. Not implemented yet: returns an empty analysis.
+/// Analyzes one parsed file. Function units and findings arrive with the
+/// language milestones; the code-line map is real.
 #[must_use]
-pub fn analyze(_path: &str, _category: Category, _syntax: &Syntax) -> FileAnalysis {
-    FileAnalysis::default()
+pub fn analyze(_path: &str, _category: Category, syntax: &Syntax) -> FileAnalysis {
+    FileAnalysis {
+        functions: Vec::new(),
+        findings: Vec::new(),
+        code_lines: syntax.code_lines(),
+    }
 }

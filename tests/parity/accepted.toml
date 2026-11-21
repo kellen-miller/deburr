@@ -1,0 +1,120 @@
+# Divergences between the Go and Rust reports that are allowed to remain.
+#
+# Each entry names exactly one section, one entry key (path plus occurrence
+# index, for example "web/app.ts#1"), and one field, with the reason it is
+# allowed. Never accept a whole category of difference. Permitted reasons:
+#
+#   - invalid literal lexing that go/parser rejects and tree-sitter accepts
+#   - TypeScript parse-error files' code-line counts (the Go version reports
+#     zero; Rust counts every file it read)
+#   - duplicate-branch findings that differ only because the Go version
+#     compared printed layout or because terminators now separate statements
+#
+# Every entry must also be recorded in the ExecPlan's Surprises & Discoveries.
+
+# vtprotobuf: CMake writes `compiler_depend.ts` dependency files (make rules,
+# not TypeScript). Both versions report parse_error; Go counts 0 code lines
+# for a TypeScript file that fails to parse, Rust counts the tokens it
+# recovered (2 lines).
+
+[[accepted]]
+section = "files"
+key = "_vendor/protobuf-33.2/build/CMakeFiles/conformance_cpp.dir/compiler_depend.ts#1"
+field = "code_lines"
+reason = "TypeScript parse-error file: Go reports 0 code lines, Rust counts recovered tokens"
+
+[[accepted]]
+section = "files"
+key = "_vendor/protobuf-33.2/build/CMakeFiles/conformance_test_runner.dir/compiler_depend.ts#1"
+field = "code_lines"
+reason = "TypeScript parse-error file: Go reports 0 code lines, Rust counts recovered tokens"
+
+[[accepted]]
+section = "files"
+key = "_vendor/protobuf-33.2/build/CMakeFiles/libconformance_common.dir/compiler_depend.ts#1"
+field = "code_lines"
+reason = "TypeScript parse-error file: Go reports 0 code lines, Rust counts recovered tokens"
+
+[[accepted]]
+section = "files"
+key = "_vendor/protobuf-33.2/build/CMakeFiles/libprotobuf-lite.dir/compiler_depend.ts#1"
+field = "code_lines"
+reason = "TypeScript parse-error file: Go reports 0 code lines, Rust counts recovered tokens"
+
+[[accepted]]
+section = "files"
+key = "_vendor/protobuf-33.2/build/CMakeFiles/libprotobuf.dir/compiler_depend.ts#1"
+field = "code_lines"
+reason = "TypeScript parse-error file: Go reports 0 code lines, Rust counts recovered tokens"
+
+[[accepted]]
+section = "files"
+key = "_vendor/protobuf-33.2/build/CMakeFiles/libprotoc.dir/compiler_depend.ts#1"
+field = "code_lines"
+reason = "TypeScript parse-error file: Go reports 0 code lines, Rust counts recovered tokens"
+
+[[accepted]]
+section = "files"
+key = "_vendor/protobuf-33.2/build/CMakeFiles/libupb.dir/compiler_depend.ts#1"
+field = "code_lines"
+reason = "TypeScript parse-error file: Go reports 0 code lines, Rust counts recovered tokens"
+
+[[accepted]]
+section = "files"
+key = "_vendor/protobuf-33.2/build/CMakeFiles/protoc-gen-upb.dir/compiler_depend.ts#1"
+field = "code_lines"
+reason = "TypeScript parse-error file: Go reports 0 code lines, Rust counts recovered tokens"
+
+[[accepted]]
+section = "files"
+key = "_vendor/protobuf-33.2/build/CMakeFiles/protoc-gen-upb_minitable.dir/compiler_depend.ts#1"
+field = "code_lines"
+reason = "TypeScript parse-error file: Go reports 0 code lines, Rust counts recovered tokens"
+
+[[accepted]]
+section = "files"
+key = "_vendor/protobuf-33.2/build/CMakeFiles/protoc-gen-upbdefs.dir/compiler_depend.ts#1"
+field = "code_lines"
+reason = "TypeScript parse-error file: Go reports 0 code lines, Rust counts recovered tokens"
+
+[[accepted]]
+section = "files"
+key = "_vendor/protobuf-33.2/build/CMakeFiles/protoc.dir/compiler_depend.ts#1"
+field = "code_lines"
+reason = "TypeScript parse-error file: Go reports 0 code lines, Rust counts recovered tokens"
+
+[[accepted]]
+section = "files"
+key = "_vendor/protobuf-33.2/build/_deps/jsoncpp-build/src/lib_json/CMakeFiles/jsoncpp_lib.dir/compiler_depend.ts#1"
+field = "code_lines"
+reason = "TypeScript parse-error file: Go reports 0 code lines, Rust counts recovered tokens"
+
+[[accepted]]
+section = "files"
+key = "_vendor/protobuf-33.2/build/_deps/jsoncpp-build/src/lib_json/CMakeFiles/jsoncpp_object.dir/compiler_depend.ts#1"
+field = "code_lines"
+reason = "TypeScript parse-error file: Go reports 0 code lines, Rust counts recovered tokens"
+
+[[accepted]]
+section = "files"
+key = "_vendor/protobuf-33.2/build/_deps/jsoncpp-build/src/lib_json/CMakeFiles/jsoncpp_static.dir/compiler_depend.ts#1"
+field = "code_lines"
+reason = "TypeScript parse-error file: Go reports 0 code lines, Rust counts recovered tokens"
+
+[[accepted]]
+section = "files"
+key = "_vendor/protobuf-33.2/build/_deps/jsoncpp-subbuild/CMakeFiles/jsoncpp-populate.dir/compiler_depend.ts#1"
+field = "code_lines"
+reason = "TypeScript parse-error file: Go reports 0 code lines, Rust counts recovered tokens"
+
+[[accepted]]
+section = "files"
+key = "_vendor/protobuf-33.2/build/third_party/utf8_range/CMakeFiles/utf8_range.dir/compiler_depend.ts#1"
+field = "code_lines"
+reason = "TypeScript parse-error file: Go reports 0 code lines, Rust counts recovered tokens"
+
+[[accepted]]
+section = "files"
+key = "_vendor/protobuf-33.2/build/third_party/utf8_range/CMakeFiles/utf8_validity.dir/compiler_depend.ts#1"
+field = "code_lines"
+reason = "TypeScript parse-error file: Go reports 0 code lines, Rust counts recovered tokens"
