@@ -44,12 +44,27 @@ fn complexity_verdict_counts_functions_and_production_share() {
 
     report.functions[0].category = Category::Test;
     let mixed = summarize(&report, "repo").verdict.complexity;
-    assert!(
-        mixed.detail.contains("five are in production code"),
-        "{}",
-        mixed.detail
+    assert_eq!(
+        mixed.detail,
+        "Five are in production code and hold 7.6% of its complexity. One is in test code."
     );
-    assert!(mixed.detail.contains("one are in test code"));
+
+    report.functions.truncate(2);
+    report.functions[0].category = Category::Production;
+    let pair = summarize(&report, "repo").verdict.complexity;
+    assert!(
+        pair.detail.starts_with("Both are in production code"),
+        "{}",
+        pair.detail
+    );
+
+    report.functions.truncate(1);
+    let single = summarize(&report, "repo").verdict.complexity;
+    assert!(
+        single.detail.starts_with("It is in production code"),
+        "{}",
+        single.detail
+    );
 }
 
 #[test]

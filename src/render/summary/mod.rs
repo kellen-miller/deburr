@@ -183,6 +183,15 @@ fn number_word(value: u32) -> String {
         .map_or_else(|| count(value), |word| (*word).to_owned())
 }
 
+/// `word` with its first letter in upper case, for a number word that opens
+/// a sentence.
+fn capitalized(word: &str) -> String {
+    let mut letters = word.chars();
+    letters.next().map_or_else(String::new, |first| {
+        first.to_uppercase().chain(letters).collect()
+    })
+}
+
 pub(super) fn directory_of(path: &str) -> &str {
     path.rsplit_once('/').map_or("", |(directory, _)| directory)
 }
@@ -279,12 +288,18 @@ fn verdict(report: &Report) -> Verdict {
             detail: format!("Limit: cyclomatic complexity {threshold}."),
         }
     } else {
-        let mut detail = if production == total {
-            format!("All {} are in production code", number_word(total))
-        } else if production == 0 {
-            "None are in production code".to_owned()
-        } else {
-            format!("{} are in production code", number_word(production))
+        let mut detail = match (production, total) {
+            (1, 1) => "It is in production code".to_owned(),
+            (2, 2) => "Both are in production code".to_owned(),
+            (production, total) if production == total => {
+                format!("All {} are in production code", number_word(total))
+            }
+            (0, _) => "None are in production code".to_owned(),
+            (production, _) => format!(
+                "{} {} in production code",
+                capitalized(&number_word(production)),
+                if production == 1 { "is" } else { "are" }
+            ),
         };
 
         if production > 0
@@ -301,7 +316,11 @@ fn verdict(report: &Report) -> Verdict {
         if test == 0 {
             detail.push_str(" No test function is over.");
         } else if test != total {
-            detail.push_str(&format!(" {} are in test code.", number_word(test)));
+            detail.push_str(&format!(
+                " {} {} in test code.",
+                capitalized(&number_word(test)),
+                if test == 1 { "is" } else { "are" }
+            ));
         }
 
         Fact {
