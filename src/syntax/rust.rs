@@ -16,8 +16,8 @@ use std::ops::Range;
 use tree_sitter::Node;
 
 use super::{
-    BranchShape, ChainedBranch, Enclosing, FindingRules, LanguageRules, StatementRules, TokenRules,
-    UnitNaming,
+    BranchShape, CallShape, ChainedBranch, Enclosing, FindingRules, LanguageRules, OwnershipRules,
+    StatementRules, TokenRules, UnitNaming,
 };
 
 /// Rules table for Rust.
@@ -57,16 +57,64 @@ pub static RULES: LanguageRules = LanguageRules {
     naming: UnitNaming::Lexical { name: unit_name },
     package_name,
     statements: StatementRules {
-        comment_kind: "line_comment",
+        comment_kinds: &["line_comment", "block_comment"],
         block_kind: "block",
         statement_list_kind: None,
         if_kind: "if_expression",
         return_kind: "return_expression",
     },
-    // Rust's structural signals arrive with its findings.
+    // No flat-guard, field-mapping, or assertion signals.
     signals: None,
+    ownership: Some(OwnershipRules {
+        call_kind: "call_expression",
+        method_kind: "field_expression",
+        clone_like: &[
+            CallShape {
+                method: "clone",
+                arguments: 0,
+            },
+            CallShape {
+                method: "to_owned",
+                arguments: 0,
+            },
+            CallShape {
+                method: "cloned",
+                arguments: 0,
+            },
+        ],
+        unwrap_like: &[
+            CallShape {
+                method: "unwrap",
+                arguments: 0,
+            },
+            CallShape {
+                method: "unwrap_unchecked",
+                arguments: 0,
+            },
+            CallShape {
+                method: "unwrap_err",
+                arguments: 0,
+            },
+            CallShape {
+                method: "expect",
+                arguments: 1,
+            },
+            CallShape {
+                method: "expect_err",
+                arguments: 1,
+            },
+        ],
+        macro_kind: "macro_invocation",
+        panic_macros: &["panic", "todo", "unimplemented", "unreachable"],
+        unsafe_kind: "unsafe_block",
+    }),
     findings: FindingRules {
-        shape: BranchShape::Disabled,
+        // An `if` is always an expression statement, even as a block's tail.
+        shape: BranchShape::Conditional {
+            else_kind: "else_clause",
+            parenthesized_kind: "parenthesized_expression",
+            statement_kind: Some("expression_statement"),
+        },
         true_kind: "boolean_literal",
         false_kind: "boolean_literal",
         comparison_operators: &["==", "!=", "<", "<=", ">", ">="],

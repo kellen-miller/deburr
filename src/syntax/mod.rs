@@ -57,6 +57,8 @@ pub struct LanguageRules {
     pub statements: StatementRules,
     /// Structural signals beyond nesting; `None` when the language has none.
     pub signals: Option<SignalRules>,
+    /// Ownership and panic signals (Rust); `None` when the language has none.
+    pub ownership: Option<OwnershipRules>,
     pub findings: FindingRules,
     /// The language's own validity check, for what tree-sitter accepts but
     /// the language's reference parser rejects. Returns the start of the
@@ -130,7 +132,7 @@ pub enum UnitNaming {
 /// Where statements live in the tree.
 #[derive(Debug)]
 pub struct StatementRules {
-    pub comment_kind: &'static str,
+    pub comment_kinds: &'static [&'static str],
     /// A braced body.
     pub block_kind: &'static str,
     /// The child of a block that holds its statements, when it has one (Go).
@@ -177,6 +179,29 @@ pub struct SignalRules {
     pub testing_methods: &'static [&'static str],
 }
 
+/// A method call by name and argument count: `.clone()` is `clone` with 0.
+#[derive(Debug)]
+pub struct CallShape {
+    pub method: &'static str,
+    pub arguments: usize,
+}
+
+/// The shapes behind `clone_like_calls`, `unwrap_like_calls`, `panic_macros`,
+/// and `unsafe_blocks`.
+#[derive(Debug)]
+pub struct OwnershipRules {
+    pub call_kind: &'static str,
+    /// The kind of a call's `function` that makes it a method call; its
+    /// `field` is the method name.
+    pub method_kind: &'static str,
+    pub clone_like: &'static [CallShape],
+    pub unwrap_like: &'static [CallShape],
+    pub macro_kind: &'static str,
+    /// Macro names, compared with the last segment of the macro's path.
+    pub panic_macros: &'static [&'static str],
+    pub unsafe_kind: &'static str,
+}
+
 /// The shapes behind the two findings.
 #[derive(Debug)]
 pub struct FindingRules {
@@ -200,15 +225,17 @@ pub enum BranchShape {
         /// Whether a function declares exactly one unnamed `bool` result.
         returns_plain_bool: fn(Node<'_>, &[u8]) -> bool,
     },
-    /// No findings are reported (Rust, until its rules are implemented).
-    Disabled,
-    /// TypeScript. The other branch is the `else` or, with none, the next
-    /// statement in the same block. Either finding may fire in any function,
-    /// and at most one fires per `if`.
+    /// TypeScript and Rust. The other branch is the `else` or, with none, the
+    /// next statement in the same block. Either finding may fire in any
+    /// function, and at most one fires per `if`.
     Conditional {
         else_kind: &'static str,
         /// The node around an `if` condition.
         parenthesized_kind: &'static str,
+        /// The node that wraps an expression used as a statement (Rust's
+        /// `expression_statement`), which a branch's lone `return` or `if`
+        /// sits in.
+        statement_kind: Option<&'static str>,
     },
 }
 

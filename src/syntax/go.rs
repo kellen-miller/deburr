@@ -47,7 +47,7 @@ pub static RULES: LanguageRules = LanguageRules {
     naming: UnitNaming::Positional { declared_name },
     package_name,
     statements: StatementRules {
-        comment_kind: "comment",
+        comment_kinds: &["comment"],
         block_kind: "block",
         statement_list_kind: Some("statement_list"),
         if_kind: "if_statement",
@@ -81,6 +81,7 @@ pub static RULES: LanguageRules = LanguageRules {
         testing_receivers: &["t", "tb", "tt", "test", "testingt"],
         testing_methods: &["error", "errorf", "fatal", "fatalf", "fail", "failnow"],
     }),
+    ownership: None,
     findings: FindingRules {
         shape: BranchShape::Sequenced {
             redundant_owner_kinds: &["function_declaration", "method_declaration"],

@@ -74,7 +74,7 @@ pub static RULES: LanguageRules = LanguageRules {
     naming: UnitNaming::Lexical { name: lexical_name },
     package_name,
     statements: StatementRules {
-        comment_kind: "comment",
+        comment_kinds: &["comment"],
         block_kind: "statement_block",
         statement_list_kind: None,
         if_kind: "if_statement",
@@ -82,10 +82,12 @@ pub static RULES: LanguageRules = LanguageRules {
     },
     // TypeScript has no flat-guard, field-mapping, or assertion signals.
     signals: None,
+    ownership: None,
     findings: FindingRules {
         shape: BranchShape::Conditional {
             else_kind: "else_clause",
             parenthesized_kind: "parenthesized_expression",
+            statement_kind: None,
         },
         true_kind: "true",
         false_kind: "false",

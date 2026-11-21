@@ -345,11 +345,15 @@ fn constructs_have_exact_measurements() {
         assert!(!found.high_complexity, "{} high complexity", want.name);
     }
 
-    assert!(report.findings.is_empty(), "Rust findings arrive later");
+    assert!(
+        report.findings.is_empty(),
+        "constructs has no finding shape: {:?}",
+        report.findings
+    );
 }
 
 #[test]
-fn schema_four_fields_are_zero_until_their_tasks_land() {
+fn schema_four_fields_describe_the_constructs_fixture() {
     let report = scenario("constructs");
 
     assert_eq!(report.schema_version, "4");
@@ -364,8 +368,15 @@ fn schema_four_fields_are_zero_until_their_tasks_land() {
     assert_eq!(report.metrics.production.code_lines, file.code_lines);
     assert_eq!(report.metrics.production.functions, 22);
 
+    // `Shape::describe` is the only function with a clone-like call: two
+    // `.to_owned()` calls. The Go-only signals stay zero for Rust.
     for found in &report.functions {
         let signals = &found.structural_signals;
+        let clone_like = if found.name == "Shape::describe" {
+            2
+        } else {
+            0
+        };
 
         assert_eq!(
             [
@@ -377,7 +388,7 @@ fn schema_four_fields_are_zero_until_their_tasks_land() {
                 signals.field_mappings,
                 signals.assertion_like_calls,
             ],
-            [0; 7],
+            [clone_like, 0, 0, 0, 0, 0, 0],
             "{} signals",
             found.name
         );

@@ -55,7 +55,7 @@ fn function(index: u32, mass: f64, high_complexity: bool) -> Function {
         "name": format!("F{index:02}"),
         "structural_signals": {
             "flat_guards": 1, "field_mappings": 2, "nested_branches": 3, "assertion_like_calls": 4,
-            "clone_like_calls": 0, "unwrap_like_calls": 0, "panic_macros": 0, "unsafe_blocks": 0
+            "clone_like_calls": 5, "unwrap_like_calls": 6, "panic_macros": 7, "unsafe_blocks": 8
         },
         "start": { "line": index + 1, "column": 1 },
         "end": { "line": index + 5, "column": 2 },
@@ -211,7 +211,7 @@ fn text_shows_every_report_fact() {
             "Source failures (1)",
             "broken,file.go [parse_error] syntax error at 3:5",
             "Production hotspots (2 of 2)",
-            "main.go:1:1-5:2 <script>alert(1)</script> [production] sloc=4 cyclomatic=12 nesting=2 mass=24.000000 high_complexity=true flat_guards=1 field_mappings=2 nested_branches=3 assertion_like_calls=4",
+            "main.go:1:1-5:2 <script>alert(1)</script> [production] sloc=4 cyclomatic=12 nesting=2 mass=24.000000 high_complexity=true flat_guards=1 field_mappings=2 nested_branches=3 assertion_like_calls=4 clone_like_calls=5 unwrap_like_calls=6 panic_macros=7 unsafe_blocks=8",
             "Test hotspots (0 of 0)",
             "Findings (1)",
             "main.go:4:2-9:3 [review] duplicate-branches: if branches have identical syntax",
@@ -302,7 +302,7 @@ fn html_shows_every_report_fact_and_escapes_values() {
             "Primary review items: 3",
             "unreviewed=2, refactored=0, retained=1, deferred=0, stale=1",
             "main.go:1:1-5:2",
-            "sloc=4 cyclomatic=12 max_nesting=2 mass=24.000000 flat_guards=1 field_mappings=2 nested_branches=3 assertion_like_calls=4",
+            "sloc=4 cyclomatic=12 max_nesting=2 mass=24.000000 flat_guards=1 field_mappings=2 nested_branches=3 assertion_like_calls=4 clone_like_calls=5 unwrap_like_calls=6 panic_macros=7 unsafe_blocks=8",
             "duplicate-branches",
             "if branches have identical syntax",
             "main.go:4:2-9:3",
@@ -384,7 +384,7 @@ fn github_shows_every_report_fact() {
             "::error file=broken%2Cfile.go,title=deburr analysis::syntax error at 3:5",
             "::notice title=deburr duplication::status=measured,min_tokens=80,min_lines=8",
             "production: 25.00%25 duplication (10 of 40 code lines across 2 files)",
-            "::notice file=main.go,line=1,endLine=5,title=deburr function::<script>alert(1)</script> sloc=4 cyclomatic=12 nesting=2 mass=24.000000 flat_guards=1 field_mappings=2 nested_branches=3 assertion_like_calls=4 identity_ambiguous=false",
+            "::notice file=main.go,line=1,endLine=5,title=deburr function::<script>alert(1)</script> sloc=4 cyclomatic=12 nesting=2 mass=24.000000 flat_guards=1 field_mappings=2 nested_branches=3 assertion_like_calls=4 clone_like_calls=5 unwrap_like_calls=6 panic_macros=7 unsafe_blocks=8 identity_ambiguous=false",
             "::warning file=main.go,line=4,endLine=9,title=duplicate-branches::if branches have identical syntax",
             "::warning file=a/one.go,line=3,endLine=14,title=deburr duplication::clone clone-1 family=family-1 tokens=95 identity_ambiguous=true code_lines=10 functions=pkg/a/one.go::One",
             "::warning file=b/two.go,line=20,endLine=31,title=deburr duplication::clone clone-1 family=family-1 tokens=95 identity_ambiguous=true code_lines=9 functions=pkg/b/two.go::Two,pkg/b/two.go::Three",
