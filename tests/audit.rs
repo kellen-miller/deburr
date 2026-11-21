@@ -790,7 +790,40 @@ fn progress_lines_follow_the_scan() {
 }
 
 #[test]
-fn duplication_is_not_run_yet() {
+fn duplication_is_measured_by_default() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    write(dir.path(), "a.go", GO_SOURCE);
+
+    let measured = AuditOptions {
+        duplication: Some(deburr::duplication::DuplicationSettings {
+            min_tokens: 80,
+            min_lines: 8,
+        }),
+        ..options()
+    };
+    let report = run(dir.path(), &measured).report;
+
+    assert_eq!(
+        report.duplication.status,
+        deburr::report::DuplicationStatus::Measured
+    );
+    assert!(report.duplication.clones.is_empty());
+    assert!(report.findings.is_empty());
+
+    let categories: Vec<Category> = report
+        .duplication
+        .categories
+        .iter()
+        .map(|row| row.category)
+        .collect();
+
+    assert_eq!(categories, [Category::Production, Category::Test]);
+    assert_eq!(report.duplication.categories[0].files, 1);
+    assert_eq!(report.duplication.categories[0].code_lines, 4);
+}
+
+#[test]
+fn no_duplicates_leaves_duplication_not_requested() {
     let dir = tempfile::tempdir().expect("temp dir");
     write(dir.path(), "a.go", GO_SOURCE);
 
@@ -800,5 +833,5 @@ fn duplication_is_not_run_yet() {
         report.duplication.status,
         deburr::report::DuplicationStatus::NotRequested
     );
-    assert!(report.findings.is_empty());
+    assert!(report.duplication.categories.is_empty());
 }
