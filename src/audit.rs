@@ -1,6 +1,7 @@
 //! Runs one audit from start to finish and returns its report.
 
 use std::io::Write;
+use std::ops::Range;
 use std::path::Path;
 
 use rayon::prelude::*;
@@ -63,10 +64,14 @@ struct FileOutcome {
     /// test code, which is kept apart below so it can join the test group.
     language: Option<Language>,
     tokens: Vec<Token>,
+    /// Runs of `tokens` that were contiguous in the source; clone detection
+    /// never matches across two runs.
+    segments: Vec<Range<usize>>,
     code_lines: Vec<bool>,
-    /// Inline test tokens and the lines they mark; empty without inline
-    /// tests, and with `--exclude-tests`.
+    /// Inline test tokens, their runs, and the lines they mark; empty without
+    /// inline tests, and with `--exclude-tests`.
     inline_test_tokens: Vec<Token>,
+    inline_test_segments: Vec<Range<usize>>,
     inline_test_lines: Vec<bool>,
 }
 
@@ -287,8 +292,10 @@ fn analyze_file(
         findings: Vec::new(),
         language: None,
         tokens: Vec::new(),
+        segments: Vec::new(),
         code_lines: Vec::new(),
         inline_test_tokens: Vec::new(),
+        inline_test_segments: Vec::new(),
         inline_test_lines: Vec::new(),
     };
 
@@ -343,12 +350,33 @@ fn analyze_file(
             if retain {
                 // Production and inline test code are separate duplication
                 // inputs, so each keeps only its own tokens and lines. Real
-                // source positions stay on every token.
+                // source positions stay on every token. Each input is split
+                // into runs that were contiguous in the source, so removing
+                // the other category never joins the code around it.
                 let inline_lines = parsed.region_code_lines(&test_regions);
-                let (inline, production): (Vec<Token>, Vec<Token>) = parsed
-                    .tokens
-                    .into_iter()
-                    .partition(|token| token.within(&test_regions));
+                let mut production = Vec::new();
+                let mut inline = Vec::new();
+                let mut in_inline = false;
+
+                for token in parsed.tokens {
+                    let is_inline = token.within(&test_regions);
+                    let (tokens, segments) = if is_inline {
+                        (&mut inline, &mut outcome.inline_test_segments)
+                    } else {
+                        (&mut production, &mut outcome.segments)
+                    };
+
+                    if is_inline != in_inline || segments.is_empty() {
+                        segments.push(tokens.len()..tokens.len());
+                    }
+
+                    in_inline = is_inline;
+                    tokens.push(token);
+
+                    if let Some(run) = segments.last_mut() {
+                        run.end = tokens.len();
+                    }
+                }
 
                 outcome.tokens = production;
                 outcome.code_lines = code_lines
@@ -360,6 +388,8 @@ fn analyze_file(
                 if include_inline_tests && !test_regions.is_empty() {
                     outcome.inline_test_tokens = inline;
                     outcome.inline_test_lines = inline_lines;
+                } else {
+                    outcome.inline_test_segments.clear();
                 }
             }
 
@@ -418,6 +448,11 @@ fn measure_duplication(
                     &outcome.inline_test_tokens
                 } else {
                     &outcome.tokens
+                },
+                segments: if inline {
+                    &outcome.inline_test_segments
+                } else {
+                    &outcome.segments
                 },
                 code_lines: if inline {
                     &outcome.inline_test_lines
