@@ -48,21 +48,30 @@ and skips the publish job, so no release or tag is created.
 
 ## Parity with the Go version
 
-While the Go implementation exists, `tests/parity.rs` runs the Go binary and
-the Rust library on the same root, reduces both reports to a projection (files,
-categories, function identities, metrics, signals, findings), and fails on any
-difference not listed with a reason in `tests/parity/accepted.toml`. It is
-skipped unless both variables are set:
-
-```sh
-go build -o /tmp/deburr-go/deburr ./cmd/deburr
-DEBURR_GO_BIN=/tmp/deburr-go/deburr \
-DEBURR_PARITY_ROOTS="$PWD:/path/to/another/go/project" \
-  cargo test --locked --test parity -- --nocapture
-```
+The Rust rewrite was checked against the retired Go implementation by reducing
+both reports to a projection (files, categories, function identities, metrics,
+signals, findings) and requiring no differences beyond the per-entry reasons in
+`tests/parity/accepted.toml`. The Go-derived projections for `tests/corpus/`
+are committed under `tests/corpus/expected/`, and
+`rust_matches_committed_corpus_projections` checks them on every `cargo test`
+without a Go toolchain.
 
 IDs, fingerprints, condition text, float formatting, parse-error text, and HTML
-bytes may differ. Duplication is excluded because the engine changed.
+bytes are not projected. Duplication is excluded because the engine changed.
+
+To compare against the Go version again (for example after a grammar update),
+build it from the last commit that contains it (the parent of the commit that
+removed `go.mod`) and point the harness at it.
+`DEBURR_BLESS_CORPUS=1` rewrites the committed projections from that binary;
+review every change before committing it.
+
+```sh
+git worktree add /tmp/deburr-go-src "$(git log -1 --format=%H -- go.mod)^"
+(cd /tmp/deburr-go-src && go build -o /tmp/deburr-go/deburr ./cmd/deburr)
+DEBURR_GO_BIN=/tmp/deburr-go/deburr \
+DEBURR_PARITY_ROOTS="$PWD:/path/to/another/project" \
+  cargo test --locked --test parity -- --nocapture
+```
 
 ## VS Code TypeScript integration
 
