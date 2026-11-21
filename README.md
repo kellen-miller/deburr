@@ -3,18 +3,25 @@
 Find the rough edges that accumulate as code evolves.
 
 Deburr is a deterministic code-quality CLI for Go and TypeScript. It reports
-function metrics, complexity, nesting, and branch findings with source
-locations, so developers, coding agents, and CI can see where code has grown
-hard to follow. It does not use models, rewrite files, or produce a composite
-quality score.
+function metrics, complexity, nesting, branch findings, and copy-pasted code
+with source locations, so developers, coding agents, and CI can see where code
+has grown hard to follow. Every result is tied to the same function
+identities, so findings, complexity, and clones can be reviewed together. It
+does not use models, rewrite files, or produce a composite quality score.
 
-**Status:** `v0.2.0` is experimental and pre-1.0; reports and flags may change.
+Deburr is a single Rust binary. Clone detection is built in; there is nothing
+else to install.
+
+**Status:** `1.0.0` rewrote Deburr in Rust. Reports use schema `3` and
+analyzer `deburr` `1.0.0`; they are not comparable with reports from the Go
+versions. See [Changes from the Go version](#changes-from-the-go-version).
 
 ## What it analyzes
 
 - Go and TypeScript: `.go`, `.ts`, `.tsx`, `.mts`, `.cts`.
-- Parser-only analysis, including files excluded by build constraints. No
-  type-checking, import resolution, or execution of target code.
+- Parser-only analysis with tree-sitter, including files excluded by build
+  constraints. No type-checking, import resolution, or execution of target
+  code.
 - Tests are analyzed separately from production code. `vendor`, generated
   files, and `testdata` are excluded by default.
 - Coverage reports what was analyzed, excluded, unsupported, or unparsed.
@@ -25,12 +32,25 @@ cannot read or parse, not because findings exist.
 
 ## Install
 
+Download a prebuilt binary from the
+[releases page](https://github.com/kellen-miller/deburr/releases). Archives
+exist for `x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`,
+`x86_64-apple-darwin`, `aarch64-apple-darwin`, and `x86_64-pc-windows-msvc`,
+next to a `SHA256SUMS` file. The install script downloads over HTTPS, verifies
+the checksum, and refuses to install on a mismatch:
+
 ```sh
-go install github.com/kellen-miller/deburr/cmd/deburr@v0.2.0
+version=1.0.0
+target=aarch64-apple-darwin
+curl --proto '=https' --fail --location --output install-deburr.sh \
+  "https://raw.githubusercontent.com/kellen-miller/deburr/v$version/scripts/install-deburr.sh"
+bash install-deburr.sh "$version" "$target" \
+  "https://github.com/kellen-miller/deburr/releases/download/v$version" "$HOME/.local/bin"
 ```
 
-Installing or building from source requires the Go version in `go.mod`. The
-compiled binary needs neither Go nor Node for native audits.
+To build from source, run `cargo build --release --locked` with a stable Rust
+toolchain (1.97 or newer) and use `target/release/deburr`. A C compiler is
+needed for the tree-sitter grammars.
 
 ## Quick start
 
@@ -54,12 +74,12 @@ for all flags.
 
 ### Baselines and versions
 
-Reports record the analyzer identity (currently `deburr/native` `0.3.0`,
-report schema `2`) and the settings used. These differ from the release tag;
-`deburr --version` prints the analyzer version. Changes to analyzer or detector
-versions or measurement settings can make reports incompatible. Rerun the
-baseline with matching versions and settings before comparing. See
-[docs/design.md](docs/design.md) for details.
+Reports record the analyzer identity (`deburr` `1.0.0`, report schema `3`) and
+the settings used, including the clone detection settings. `deburr --version`
+prints the version of the binary. Changes to the analyzer version or to
+measurement settings make reports incompatible, and `deburr compare` says so
+instead of drawing a conclusion. Rerun the baseline with the same version and
+settings before comparing. See [docs/design.md](docs/design.md) for details.
 
 ### Reviewing findings
 
@@ -72,41 +92,42 @@ deburr review apply /tmp/deburr-before.json --ledger /tmp/deburr-review.json \
   --format html --output /tmp/deburr-reviewed.html
 ```
 
-## Duplication (optional)
+## Duplication
 
-Duplication detection is off by default and uses an external detector you
-install yourself. Deburr supports any CPD/jscpd release in major version 5:
+Every audit looks for clones: repeated runs of code tokens in the files Deburr
+analyzes. Production code and test code are searched as separate groups, so a
+clone never pairs production code with a test, and each group gets its own
+percentage. Nothing outside the analyzed files is read.
 
-```sh
-npm install -g jscpd@5
-deburr audit . --duplicates
-```
+- `--min-clone-tokens N` (default 80) sets the shortest clone, in tokens.
+- `--min-clone-lines N` (default 8) sets the shortest clone, in code lines. A
+  clone is kept only when both of its regions cover at least `N` code lines;
+  blank and comment lines do not count.
+- `--no-duplicates` skips clone detection. The report then records duplication
+  as `not_requested`, never as a zero measurement. `--duplicates` is accepted
+  and has no effect.
+- `.jscpd.json` is not read.
 
-`--duplicates` uses `cpd`, then `jscpd`, from `PATH`; `--cpd PATH` or
-`--jscpd PATH` selects an executable.
-
-- The nearest `.jscpd.json` up to the Git root is used; override it with
-  `--duplicates-config FILE`. Config paths and globs are relative to the config
-  directory, and `.gitignore` rules apply unless `gitignore: false` is set.
-- Config scopes only narrow duplication. Production and test code are measured
-  separately, so percentages can differ from a standalone jscpd run.
-- A configured threshold is advisory unless `--enforce-duplicates-threshold`
-  is passed. Exceeded thresholds still keep the clone evidence.
-- Empty scopes, unsupported settings, and `skipLocal: true` are errors.
-
-Reports record the detector version and effective config. See
-[docs/design.md](docs/design.md) for the supported settings.
+Each clone region lists the functions it overlaps by report ID, so clones,
+findings, and complexity join on the same identities. The percentage is the
+share of a category's code lines covered by any clone region (each line counted
+once), so it never exceeds 100 and does not move when blank lines or comments
+change. It differs from the figure a standalone jscpd run prints. Detection
+uses the `cpd-core` library from [jscpd](https://github.com/kucherenko/jscpd)
+on Deburr's own tree-sitter tokens.
 
 ## GitHub Action
 
-The action sets up Go, builds Deburr from its own source, and runs `audit`:
+At a release tag the action downloads the prebuilt binary for the runner and
+verifies its checksum. At any other ref (a branch, a commit, or a local
+`uses: ./`) it installs Rust and runs `cargo build --release --locked`.
 
 ```yaml
 steps:
   - uses: actions/checkout@v4
 
   - id: deburr
-    uses: kellen-miller/deburr@v0.2.0
+    uses: kellen-miller/deburr@v1.0.0
     with:
       path: .
 ```
@@ -126,24 +147,25 @@ output. To keep it:
 | --- | --- | --- |
 | `path` | `.` | File or directory to audit |
 | `format` | `github` | `text`, `json`, `html`, or `github` |
-| `duplicates` | `false` | Enable duplication detection |
-| `cpd` / `jscpd` | | Detector executable (use one) |
-| `duplicates-config` | | Explicit `.jscpd.json` |
-| `enforce-duplicates-threshold` | `false` | Fail when the threshold is exceeded |
+| `duplicates` | `true` | Detect clones; `false` skips detection |
+| `min-clone-tokens` | `80` | Minimum tokens in a clone |
+| `min-clone-lines` | `8` | Minimum code lines in each clone region |
 
-Duplication inputs require `duplicates: true`. The action does not install
-CPD or jscpd, so provision it first:
+The action needs neither Go, Node, nor a clone detector. The step fails on
+analyzer errors, not on findings alone.
 
-```yaml
-  - uses: actions/setup-node@v4
-  - run: npm install -g jscpd@5
-  - uses: kellen-miller/deburr@v0.2.0
-    with:
-      duplicates: true
-```
+## Changes from the Go version
 
-The step fails on analyzer errors or an enforced duplication threshold, not on
-findings alone.
+- Deburr is written in Rust and shipped as prebuilt binaries. `go install` no
+  longer applies.
+- Clone detection is built in and on by default. The flags `--cpd`, `--jscpd`,
+  `--duplicates-config`, and `--enforce-duplicates-threshold`, and the matching
+  Action inputs, are removed. Deburr no longer measures a threshold; it
+  reports measurements.
+- Reports use schema `3` and analyzer version `1.0.0`. `deburr compare`
+  refuses to compare them with earlier reports.
+- Findings compare branch bodies by code tokens rather than printed layout, so
+  layout and comments never make two branches differ.
 
 ## Cleanup guide
 
@@ -153,11 +175,13 @@ baseline, make behavior-preserving changes, and compare. The portable
 
 ## Development
 
-Run `go test ./...`. Go lint and formatting run in pull-request CI through
-`kellen-miller/ci/.github/actions/go-lint` pinned to
-`9478f2f23f217048a86cb1916fb78b312f20afa7`, using its bundled policy.
-See [docs/testing.md](docs/testing.md) for the pinned
-VS Code integration test and known TypeScript parser limitations.
+Run `cargo test --locked`. Pull-request CI runs `cargo fmt`, `cargo clippy`,
+`cargo test`, and `cargo build` through
+`kellen-miller/ci/.github/actions/rust-check` and its bundled lint policy; fix
+findings in code rather than suppressing them. See
+[docs/testing.md](docs/testing.md) for the test layers, the parity check
+against the Go version, and the pinned VS Code integration test. Releases are
+built by `.github/workflows/release.yaml` on pushes to `main`.
 
 ## License
 

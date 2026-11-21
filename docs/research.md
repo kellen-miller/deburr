@@ -1,15 +1,54 @@
 # Research notes
 
 These notes record external references and design decisions behind Deburr's
-current deterministic Go analyzer. The CLI owns analysis and report
+deterministic Go and TypeScript analyzer. The CLI owns analysis and report
 generation, and the cleanup guide consumes its evidence without invoking a
 model or applying automatic refactors.
 
 ## Current boundary
 
-Deburr is experimental, pre-1.0, and Go-only. Its reports preserve raw
-measurements, source locations, coverage, and compatibility identities so a
-later comparison can distinguish a code change from a measurement change.
+Deburr is a single Rust binary that analyzes Go and TypeScript. Its reports
+preserve raw measurements, source locations, coverage, and compatibility
+identities so a later comparison can distinguish a code change from a
+measurement change. Findings, complexity, signals, and clones share function
+identities, so they can be reviewed together.
+
+## Why Rust, and why clones are built in
+
+The Go version shelled out to a caller-installed jscpd and carried about 2,200
+lines that existed only to drive it: snapshot directories, a reimplementation
+of its config and `.gitignore` handling, version checks, and path mapping.
+jscpd 5 is written in Rust and publishes MIT-licensed library crates, so a Rust
+Deburr can find clones in-process, on the files it already parsed.
+
+The split of ownership is deliberate. Deburr chooses files, parses them, and
+reports. The `cpd-core` library does one thing: find repeated runs in token
+streams that Deburr hands it. Deburr therefore does not read `.jscpd.json` and
+scans nothing outside its analyzed files.
+
+Findings from the crate investigation that shaped the design:
+
+- The tokenizer crate does not use tree-sitter. Its Go and Rust support is a
+  hand-written line scanner (keywords become identifiers, Rust lifetimes are
+  mis-lexed, comment text becomes tokens). Deburr feeds `cpd-core` tokens from
+  its own tree-sitter parse and does not depend on the tokenizer crate.
+- The crates change public struct fields in almost every 0.1.x patch release.
+  Deburr pins `cpd-core` exactly, calls it from one module, and pins results
+  with a snapshot test.
+- `cpd-core`'s line minimum is exclusive and depends on file order, and jscpd's
+  percentage can exceed 100 and moves with whitespace. Deburr applies its own
+  line minimum in code lines and reports the share of distinct code lines
+  covered, so percentages are bounded and stable. They are not expected to
+  match a standalone jscpd run.
+- Reports from the Go and Rust versions are never compared: `compare` already
+  refused different analyzer identities, so the parity bar is a semantic diff
+  of files, functions, metrics, and findings rather than identical bytes.
+  Byte identity would have meant reimplementing `go/printer`, `go/parser`
+  messages, Go's JSON encoding, and `html/template` for no user benefit.
+
+Two tree-sitter grammars are vendored and patched where upstream releases lag
+the languages (TypeScript import types and Go generic methods). Both are
+carried until upstream releases a fix.
 
 ## Sources
 
@@ -28,10 +67,12 @@ later comparison can distinguish a code change from a measurement change.
   TypeScript/TSX analyzer with function-level erosion, duplication, import
   cycles, report comparisons, and a portable cleanup guide. Its metric and
   workflow design informed Deburr's design; it is not a runtime dependency.
-- [jscpd (CPD)](https://github.com/kucherenko/jscpd) powers Deburr's optional
-  duplication analysis, pinned to CPD 5.3.0. It runs only when requested, uses
-  caller-provided tooling, and records its identity and configuration in the
-  report.
+- [jscpd](https://github.com/kucherenko/jscpd) 5 publishes the `cpd-core`
+  library crate that Deburr links to find clones. It runs in-process on
+  Deburr's own tokens, is pinned to an exact version, and its detection
+  settings (minimum tokens and lines) are recorded in the report.
+- [tree-sitter](https://tree-sitter.github.io/) is the parser for Go and
+  TypeScript, so each file is parsed once for metrics, findings, and clones.
 
 ## Lessons from Trellis
 

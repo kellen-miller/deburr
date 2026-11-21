@@ -1,0 +1,215 @@
+name: Release
+
+# A tag never exists without its binaries: the version is computed without
+# publishing, five targets are built and smoke-tested, the install script
+# verifies the assembled checksums, and only then is the release created and
+# the assets attached. If the upload fails the release and tag are deleted so
+# a re-run starts clean.
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: Build and smoke-test all targets without publishing a release
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  version:
+    name: Next version
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      build: ${{ steps.plan.outputs.build }}
+      publish: ${{ steps.plan.outputs.publish }}
+      version: ${{ steps.plan.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - id: next
+        uses: kellen-miller/ci/.github/actions/release@4f4e514ee184fbd03b393a6d0e4bccb5eea63a9a # main
+        with:
+          dry-run: 'true'
+          token: ${{ github.token }}
+      - id: plan
+        env:
+          NEXT_VERSION: ${{ steps.next.outputs.version }}
+          EVENT_NAME: ${{ github.event_name }}
+          DRY_RUN_INPUT: ${{ inputs.dry-run }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          build=false
+          publish=false
+          version="$NEXT_VERSION"
+
+          if [[ -n "$version" ]]; then
+            build=true
+            if [[ "$EVENT_NAME" == push || "$DRY_RUN_INPUT" == false ]]; then
+              publish=true
+            fi
+          elif [[ "$EVENT_NAME" == workflow_dispatch ]]; then
+            # A dry run still proves that every target builds.
+            build=true
+            version=0.0.0-dry-run
+          fi
+
+          {
+            printf 'build=%s\n' "$build"
+            printf 'publish=%s\n' "$publish"
+            printf 'version=%s\n' "$version"
+          } >> "$GITHUB_OUTPUT"
+          printf 'build=%s publish=%s version=%s\n' "$build" "$publish" "$version"
+
+  build:
+    name: Build ${{ matrix.target }}
+    needs: version
+    if: ${{ needs.version.outputs.build == 'true' }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-24.04
+            binary: deburr
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-24.04-arm
+            binary: deburr
+          - target: x86_64-apple-darwin
+            runner: macos-15-intel
+            binary: deburr
+          - target: aarch64-apple-darwin
+            runner: macos-latest
+            binary: deburr
+          - target: x86_64-pc-windows-msvc
+            runner: windows-latest
+            binary: deburr.exe
+    env:
+      DEBURR_VERSION: ${{ needs.version.outputs.version }}
+      TARGET: ${{ matrix.target }}
+      BINARY: ${{ matrix.binary }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - uses: actions-rust-lang/setup-rust-toolchain@a188e68d0fd2bd36ad51dccb2b07ba6e75105f30 # v2.0.1
+        with:
+          target: ${{ matrix.target }}
+          cache: false
+          rustflags: ''
+
+      - name: Build
+        shell: bash
+        run: cargo build --release --locked --target "$TARGET"
+
+      - name: Smoke test
+        shell: bash
+        run: |
+          set -euo pipefail
+          binary="target/$TARGET/release/$BINARY"
+          test "$("$binary" --version)" = "deburr $DEBURR_VERSION"
+          # The repository root holds deliberately malformed corpus files, so
+          # audit the clean duplication corpus instead.
+          "$binary" audit tests/corpus/dup --format json --quiet --output "$RUNNER_TEMP/smoke-report.json"
+          grep -q '"schema_version": "3"' "$RUNNER_TEMP/smoke-report.json"
+          grep -q '"status": "measured"' "$RUNNER_TEMP/smoke-report.json"
+
+      - name: Package (tar.gz)
+        if: ${{ runner.os != 'Windows' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir dist
+          tar -czf "dist/deburr-$TARGET.tar.gz" -C "target/$TARGET/release" "$BINARY"
+
+      - name: Package (zip)
+        if: ${{ runner.os == 'Windows' }}
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path dist | Out-Null
+          Compress-Archive -Path "target/$env:TARGET/release/$env:BINARY" -DestinationPath "dist/deburr-$env:TARGET.zip"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: deburr-${{ matrix.target }}
+          path: dist/deburr-*
+          if-no-files-found: error
+
+  publish:
+    name: Publish release
+    needs:
+      - version
+      - build
+    if: ${{ needs.version.outputs.publish == 'true' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      EXPECTED_VERSION: ${{ needs.version.outputs.version }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: deburr-*
+          path: dist
+          merge-multiple: true
+
+      - name: Write checksums
+        shell: bash
+        working-directory: dist
+        run: |
+          set -euo pipefail
+          test "$(ls | wc -l)" -eq 5
+          sha256sum deburr-* > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Check the install script against these archives
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash scripts/install-deburr.sh "$EXPECTED_VERSION" x86_64-unknown-linux-gnu "$PWD/dist" "$RUNNER_TEMP/install-check"
+          test "$("$RUNNER_TEMP/install-check/deburr" --version)" = "deburr $EXPECTED_VERSION"
+
+      - id: release
+        uses: kellen-miller/ci/.github/actions/release@4f4e514ee184fbd03b393a6d0e4bccb5eea63a9a # main
+        with:
+          token: ${{ github.token }}
+
+      - name: Upload release assets
+        if: ${{ steps.release.outputs.release_published == 'true' }}
+        env:
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+          RELEASE_TAG: ${{ steps.release.outputs.git_tag }}
+          REPOSITORY: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$RELEASE_VERSION" == "$EXPECTED_VERSION" ]] && gh release upload "$RELEASE_TAG" dist/* --repo "$REPOSITORY"; then
+            exit 0
+          fi
+
+          printf 'upload failed for %s; deleting the release and tag\n' "$RELEASE_TAG" >&2
+          gh release delete "$RELEASE_TAG" --repo "$REPOSITORY" --cleanup-tag --yes \
+            || gh api --method DELETE "repos/$REPOSITORY/git/refs/tags/$RELEASE_TAG"
+          exit 1

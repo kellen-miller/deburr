@@ -12,27 +12,17 @@ inputs:
     required: false
     default: github
   duplicates:
-    description: Run the opt-in CPD/jscpd major 5 duplication adapter.
+    description: Detect clones in the audited files. Set to false to skip clone detection.
     required: false
-    default: "false"
-  cpd:
-    description: Optional path to a caller-provided CPD/jscpd major 5 executable.
+    default: "true"
+  min-clone-tokens:
+    description: Minimum tokens in a clone.
     required: false
-    default: ""
-
-  jscpd:
-    description: Optional path to a caller-provided jscpd major 5 executable.
+    default: "80"
+  min-clone-lines:
+    description: Minimum code lines in each clone region.
     required: false
-    default: ""
-
-  duplicates-config:
-    description: Optional path to an explicit .jscpd.json configuration.
-    required: false
-    default: ""
-  enforce-duplicates-threshold:
-    description: Fail if production or test duplication exceeds the configured threshold.
-    required: false
-    default: "false"
+    default: "8"
 
 outputs:
   report:
@@ -42,32 +32,93 @@ outputs:
 runs:
   using: composite
   steps:
-    - name: Set up Go
-      uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
-      with:
-        go-version-file: ${{ github.action_path }}/go.mod
-        cache: false
-
-    - name: Build Deburr
+    - name: Choose binary source
+      id: source
       shell: bash
-      working-directory: ${{ github.action_path }}
+      env:
+        ACTION_REF: ${{ github.action_ref }}
       run: |
         set -euo pipefail
-        mkdir -p "$RUNNER_TEMP/deburr"
-        rm -f "$RUNNER_TEMP/deburr/deburr"
-        go build -trimpath -o "$RUNNER_TEMP/deburr/deburr" ./cmd/deburr
+        # A release tag such as v1.0.0 has prebuilt, checksummed binaries.
+        # Any other ref (branch, commit, local `uses: ./`) is built from source.
+        if [[ "$ACTION_REF" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+          printf 'mode=release\n' >> "$GITHUB_OUTPUT"
+        else
+          printf 'mode=source\n' >> "$GITHUB_OUTPUT"
+        fi
+
+    - name: Download Deburr release
+      id: release
+      if: ${{ steps.source.outputs.mode == 'release' }}
+      shell: bash
+      env:
+        ACTION_REF: ${{ github.action_ref }}
+        ACTION_REPOSITORY: ${{ github.action_repository }}
+        ACTION_PATH: ${{ github.action_path }}
+      run: |
+        set -euo pipefail
+
+        case "$RUNNER_OS/$RUNNER_ARCH" in
+          Linux/X64) target=x86_64-unknown-linux-gnu ;;
+          Linux/ARM64) target=aarch64-unknown-linux-gnu ;;
+          macOS/X64) target=x86_64-apple-darwin ;;
+          macOS/ARM64) target=aarch64-apple-darwin ;;
+          Windows/X64) target=x86_64-pc-windows-msvc ;;
+          *)
+            printf 'Deburr has no prebuilt binary for %s/%s.\n' "$RUNNER_OS" "$RUNNER_ARCH" >&2
+            exit 2
+            ;;
+        esac
+
+        dest="$RUNNER_TEMP/deburr/bin"
+        bash "$ACTION_PATH/scripts/install-deburr.sh" \
+          "${ACTION_REF#v}" "$target" \
+          "https://github.com/$ACTION_REPOSITORY/releases/download/$ACTION_REF" \
+          "$dest"
+
+        binary="$dest/deburr"
+        if [[ "$RUNNER_OS" == Windows ]]; then
+          binary="$binary.exe"
+        fi
+        printf 'bin=%s\n' "$binary" >> "$GITHUB_OUTPUT"
+
+    - name: Set up Rust
+      if: ${{ steps.source.outputs.mode == 'source' }}
+      uses: actions-rust-lang/setup-rust-toolchain@a188e68d0fd2bd36ad51dccb2b07ba6e75105f30 # v2.0.1
+      with:
+        toolchain: stable
+        cache: false
+        rustflags: ''
+
+    - name: Build Deburr
+      id: build
+      if: ${{ steps.source.outputs.mode == 'source' }}
+      shell: bash
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+      run: |
+        set -euo pipefail
+        target_dir="$RUNNER_TEMP/deburr/target"
+        cargo build --release --locked \
+          --manifest-path "$ACTION_PATH/Cargo.toml" \
+          --target-dir "$target_dir"
+
+        binary="$target_dir/release/deburr"
+        if [[ "$RUNNER_OS" == Windows ]]; then
+          binary="$binary.exe"
+        fi
+        printf 'bin=%s\n' "$binary" >> "$GITHUB_OUTPUT"
 
     - name: Audit
       id: audit
       shell: bash
       env:
+        DEBURR_BIN: ${{ steps.release.outputs.bin || steps.build.outputs.bin }}
         DEBURR_PATH: ${{ inputs.path }}
         DEBURR_FORMAT: ${{ inputs.format }}
         DEBURR_DUPLICATES: ${{ inputs.duplicates }}
-        DEBURR_CPD: ${{ inputs.cpd }}
-        DEBURR_JSCPD: ${{ inputs.jscpd }}
-        DEBURR_DUPLICATES_CONFIG: ${{ inputs.duplicates-config }}
-        DEBURR_ENFORCE_THRESHOLD: ${{ inputs.enforce-duplicates-threshold }}
+        DEBURR_MIN_CLONE_TOKENS: ${{ inputs.min-clone-tokens }}
+        DEBURR_MIN_CLONE_LINES: ${{ inputs.min-clone-lines }}
       run: |
         set -euo pipefail
 
@@ -87,39 +138,12 @@ runs:
             ;;
         esac
 
-        case "$DEBURR_ENFORCE_THRESHOLD" in
-          true|false) ;;
-          *)
-            printf 'The Deburr enforce-duplicates-threshold input must be true or false.\n' >&2
+        for value in "$DEBURR_MIN_CLONE_TOKENS" "$DEBURR_MIN_CLONE_LINES"; do
+          if [[ ! "$value" =~ ^[1-9][0-9]*$ ]]; then
+            printf 'The Deburr min-clone-tokens and min-clone-lines inputs must be positive integers.\n' >&2
             exit 2
-            ;;
-        esac
-
-        if [[ ( -n "$DEBURR_DUPLICATES_CONFIG" || "$DEBURR_ENFORCE_THRESHOLD" == true ) && "$DEBURR_DUPLICATES" != true ]]; then
-          printf 'Duplication configuration and enforcement require duplicates: true.\n' >&2
-          exit 2
-        fi
-
-        if [[ "$DEBURR_DUPLICATES_CONFIG" == *$'\n'* || "$DEBURR_DUPLICATES_CONFIG" == *$'\r'* ]]; then
-          printf 'The Deburr duplicates-config path must not contain newlines.\n' >&2
-          exit 2
-        fi
-
-        if [[ -n "$DEBURR_CPD" && -n "$DEBURR_JSCPD" ]]; then
-          printf 'Select only one of cpd and jscpd.\n' >&2
-          exit 2
-        fi
-
-        DEBURR_CPD="${DEBURR_CPD:-$DEBURR_JSCPD}"
-        if [[ -n "$DEBURR_CPD" && "$DEBURR_DUPLICATES" != true ]]; then
-          printf 'The Deburr cpd/jscpd input requires duplicates: true.\n' >&2
-          exit 2
-        fi
-
-        if [[ "$DEBURR_CPD" == *$'\n'* || "$DEBURR_CPD" == *$'\r'* ]]; then
-          printf 'The Deburr cpd/jscpd path must not contain newlines.\n' >&2
-          exit 2
-        fi
+          fi
+        done
 
         if [[ -z "$DEBURR_PATH" || "$DEBURR_PATH" == *$'\n'* || "$DEBURR_PATH" == *$'\r'* ]]; then
           printf 'The Deburr path must be non-empty and must not contain newlines.\n' >&2
@@ -143,27 +167,13 @@ runs:
         output="$invocation_dir/report.$DEBURR_FORMAT"
         audit_args=(audit "$target" --format "$DEBURR_FORMAT" --output "$output")
         if [[ "$DEBURR_DUPLICATES" == true ]]; then
-          if [[ -n "$DEBURR_CPD" ]]; then
-            audit_args+=(--cpd "$DEBURR_CPD")
-          else
-            audit_args+=(--duplicates)
-          fi
-        fi
-
-        if [[ -n "$DEBURR_DUPLICATES_CONFIG" ]]; then
-          config_path="$DEBURR_DUPLICATES_CONFIG"
-          if ! is_absolute_path "$config_path"; then
-            config_path="$GITHUB_WORKSPACE/$config_path"
-          fi
-          audit_args+=(--duplicates-config "$config_path")
-        fi
-
-        if [[ "$DEBURR_ENFORCE_THRESHOLD" == true ]]; then
-          audit_args+=(--enforce-duplicates-threshold)
+          audit_args+=(--min-clone-tokens "$DEBURR_MIN_CLONE_TOKENS" --min-clone-lines "$DEBURR_MIN_CLONE_LINES")
+        else
+          audit_args+=(--no-duplicates)
         fi
 
         set +e
-        "$RUNNER_TEMP/deburr/deburr" "${audit_args[@]}"
+        "$DEBURR_BIN" "${audit_args[@]}"
         status=$?
         set -e
 
