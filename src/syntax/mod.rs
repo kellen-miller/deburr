@@ -36,6 +36,10 @@ pub struct LanguageRules {
     /// a kind alone cannot say (a match arm that is not the catch-all, a
     /// `let ... else`). `None` when the kind table is enough.
     pub decision_weight: Option<fn(Node<'_>, &[u8]) -> u32>,
+    /// The byte ranges of test items that live inside production files
+    /// (Rust's `#[cfg(test)]` items and `#[test]` functions), sorted and
+    /// disjoint. `None` when a language's tests only live in test files.
+    pub test_regions: Option<TestRegions>,
     /// Node kinds that deepen nesting inside their subtree.
     pub nesting_kinds: &'static [&'static str],
     /// How an `else if` chain nests; `None` when a chained branch nests like
@@ -68,6 +72,9 @@ pub struct ChainedBranch {
     pub clause_kind: &'static str,
     pub branch_kind: &'static str,
 }
+
+/// Finds the byte ranges of a file's inline test items, sorted and disjoint.
+pub type TestRegions = fn(Node<'_>, &[u8]) -> Vec<Range<usize>>;
 
 /// Finds the start of the first node a language's reference parser rejects.
 pub type StructureCheck = fn(Node<'_>, &[u8]) -> Option<Point>;
@@ -243,6 +250,30 @@ impl Token {
     pub fn is_terminator(&self) -> bool {
         self.bytes.is_empty()
     }
+
+    /// Whether this token lies in one of `regions` (sorted, disjoint). A
+    /// terminator sits at the end of the statement it closes, so it belongs
+    /// to a region that ends exactly there, not to one that starts there.
+    #[must_use]
+    pub fn within(&self, regions: &[Range<usize>]) -> bool {
+        let offset = if self.is_terminator() {
+            self.bytes.start.saturating_sub(1)
+        } else {
+            self.bytes.start
+        };
+
+        in_regions(regions, offset)
+    }
+}
+
+/// Whether `offset` lies in one of `regions` (sorted, disjoint).
+#[must_use]
+pub fn in_regions(regions: &[Range<usize>], offset: usize) -> bool {
+    let index = regions.partition_point(|region| region.end <= offset);
+
+    regions
+        .get(index)
+        .is_some_and(|region| region.start <= offset)
 }
 
 /// A parsed file.
@@ -274,10 +305,22 @@ impl Syntax {
     /// line.
     #[must_use]
     pub fn code_lines(&self) -> Vec<bool> {
+        self.code_lines_where(|_| true)
+    }
+
+    /// Like [`Syntax::code_lines`], counting only the tokens inside `regions`
+    /// (sorted, disjoint byte ranges), so a line that holds code from both
+    /// inside and outside a region is marked.
+    #[must_use]
+    pub fn region_code_lines(&self, regions: &[Range<usize>]) -> Vec<bool> {
+        self.code_lines_where(|token| token.within(regions))
+    }
+
+    fn code_lines_where(&self, keep: impl Fn(&Token) -> bool) -> Vec<bool> {
         let mut code = vec![false; line_count(&self.source)];
         let real = self.tokens.iter().filter(|token| !token.is_terminator());
 
-        for token in real.chain(&self.semicolons) {
+        for token in real.chain(&self.semicolons).filter(|token| keep(token)) {
             let first = token.start.line.saturating_sub(1) as usize;
             let last = (token.end.line as usize).min(code.len());
 

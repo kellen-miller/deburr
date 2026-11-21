@@ -57,6 +57,7 @@ pub static RULES: LanguageRules = LanguageRules {
         "switch_case",
     ],
     decision_weight: None,
+    test_regions: None,
     nesting_kinds: &[
         "if_statement",
         "for_statement",

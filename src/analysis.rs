@@ -4,6 +4,7 @@
 //! node kinds that matter, plus a few shape functions per language.
 
 use std::collections::HashMap;
+use std::ops::Range;
 
 use tree_sitter::Node;
 
@@ -12,7 +13,8 @@ use crate::report::{
     Category, Detail, Finding, Function, HIGH_COMPLEXITY_THRESHOLD, Position, StructuralSignals,
 };
 use crate::syntax::{
-    BranchShape, Enclosing, LanguageRules, SignalRules, Syntax, Token, UnitNaming, node_span,
+    BranchShape, Enclosing, LanguageRules, SignalRules, Syntax, Token, UnitNaming, in_regions,
+    node_span,
 };
 
 /// Rule ID of an `if` that returns opposite boolean literals.
@@ -31,6 +33,11 @@ pub struct FileAnalysis {
     pub findings: Vec<Finding>,
     /// Index `n - 1` is true when line `n` holds code.
     pub code_lines: Vec<bool>,
+    /// Code lines that hold inline test code (see [`LanguageRules::test_regions`]).
+    pub inline_test_code_lines: u32,
+    /// The byte ranges of inline test code, sorted and disjoint. Empty for a
+    /// file whose category is not production.
+    pub test_regions: Vec<Range<usize>>,
 }
 
 /// Where one function's body sits in the source.
@@ -77,10 +84,33 @@ struct Candidate {
 }
 
 /// Analyzes one parsed file.
+///
+/// In a production file, functions inside the language's test regions are
+/// category `test`, and their code lines are counted as inline test lines.
+/// With `include_inline_tests` false those functions and their findings are
+/// left out; identities are still derived from every function, so they do not
+/// depend on the flag.
 #[must_use]
-pub fn analyze(path: &str, category: Category, syntax: &Syntax) -> FileAnalysis {
+pub fn analyze(
+    path: &str,
+    category: Category,
+    syntax: &Syntax,
+    include_inline_tests: bool,
+) -> FileAnalysis {
     let code_lines = syntax.code_lines();
     let rules = syntax.language.rules();
+    let test_regions = match rules.test_regions {
+        Some(regions) if category == Category::Production => {
+            regions(syntax.tree.root_node(), &syntax.source)
+        }
+        _ => Vec::new(),
+    };
+    let inline_test_code_lines = syntax
+        .region_code_lines(&test_regions)
+        .iter()
+        .zip(&code_lines)
+        .filter(|&(&inline, &code)| inline && code)
+        .count();
     let mut units = discover_units(syntax, rules);
 
     name_units(&mut units, syntax, rules);
@@ -101,7 +131,16 @@ pub fn analyze(path: &str, category: Category, syntax: &Syntax) -> FileAnalysis 
 
     assign_sloc(&mut units, &code_lines);
 
-    for unit in &mut units {
+    let inline_tests: Vec<bool> = units
+        .iter()
+        .map(|unit| in_regions(&test_regions, unit.node.start_byte()))
+        .collect();
+
+    for (unit, &inline_test) in units.iter_mut().zip(&inline_tests) {
+        if inline_test && !include_inline_tests {
+            continue;
+        }
+
         if let Some(body) = unit.node.child_by_field_name("body") {
             let owner = OwnerContext {
                 name: &unit.name,
@@ -115,7 +154,7 @@ pub fn analyze(path: &str, category: Category, syntax: &Syntax) -> FileAnalysis 
                     }
                     BranchShape::Conditional { .. } | BranchShape::Disabled => false,
                 },
-                test_file: category == Category::Test,
+                test_file: category == Category::Test || inline_test,
             };
             let scan = scan_body(body, &owner, syntax, rules);
 
@@ -129,7 +168,11 @@ pub fn analyze(path: &str, category: Category, syntax: &Syntax) -> FileAnalysis 
     let mut functions = Vec::with_capacity(units.len());
     let mut bodies = Vec::with_capacity(units.len());
 
-    for (unit, identity) in units.into_iter().zip(identities) {
+    for ((unit, identity), inline_test) in units.into_iter().zip(identities).zip(inline_tests) {
+        if inline_test && !include_inline_tests {
+            continue;
+        }
+
         let mut occurrences: HashMap<&str, usize> = HashMap::new();
 
         for candidate in unit.candidates {
@@ -178,7 +221,11 @@ pub fn analyze(path: &str, category: Category, syntax: &Syntax) -> FileAnalysis 
             id,
             fingerprint: unit.fingerprint,
             path: path.to_owned(),
-            category,
+            category: if inline_test {
+                Category::Test
+            } else {
+                category
+            },
             name: unit.name,
             structural_signals: unit.complexity.signals,
             start: unit.start,
@@ -197,6 +244,8 @@ pub fn analyze(path: &str, category: Category, syntax: &Syntax) -> FileAnalysis 
         bodies,
         findings,
         code_lines,
+        inline_test_code_lines: u32::try_from(inline_test_code_lines).unwrap_or(u32::MAX),
+        test_regions,
     }
 }
 
