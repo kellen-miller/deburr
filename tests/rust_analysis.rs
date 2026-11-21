@@ -491,6 +491,50 @@ pub async fn runner() {
 }
 
 #[test]
+fn impl_names_keep_type_structure_and_drop_only_generic_arguments() {
+    let root = tree();
+
+    write(
+        root.path(),
+        "src/lib.rs",
+        "impl<'a> Meshgrid for (&'a ArrayRef1<f32>, &'a ArrayRef1<f32>) { fn meshgrid(&self) {} }
+impl<'a> Meshgrid for (&'a ArrayRef1<f32>, &'a ArrayRef1<f32>, &'a ArrayRef1<f32>) { fn meshgrid(&self) {} }
+impl<T> Take<T> for [u8; 4] { fn take(&self) {} }
+impl<T> Take<T> for [u8; 8] { fn take(&self) {} }
+impl<'a, T> View for &'a mut [T] { fn view(&self) {} }
+impl<T> View for *const T { fn view(&self) {} }
+impl <A as Base>::Output { fn out(&self) {} }
+impl <A as Base>::Other<A> { fn other(&self) {} }
+impl a::Tr<X> for a::b::Ty<Y> { fn go(&self) {} }
+impl Tr for a  ::  b::Spaced<Y> { fn spaced(&self) {} }
+impl Plain { fn plain(&self) {} }
+impl Show for Plain { fn show(&self) {} }
+",
+    );
+
+    let report = audit_root(root.path()).report;
+
+    assert_eq!(
+        names(&report),
+        [
+            "<(&'a ArrayRef1, &'a ArrayRef1) as Meshgrid>::meshgrid",
+            "<(&'a ArrayRef1, &'a ArrayRef1, &'a ArrayRef1) as Meshgrid>::meshgrid",
+            "<[u8; 4] as Take>::take",
+            "<[u8; 8] as Take>::take",
+            "<&'a mut [T] as View>::view",
+            "<*const T as View>::view",
+            "<A as Base>::Output::out",
+            "<A as Base>::Other::other",
+            "<a::b::Ty as a::Tr>::go",
+            "<a::b::Spaced as Tr>::spaced",
+            "Plain::plain",
+            "<Plain as Show>::show",
+        ]
+    );
+    assert!(report.functions.iter().all(|f| !f.id.contains('#')));
+}
+
+#[test]
 fn repeated_names_get_numbered_identities_and_are_ambiguous() {
     let root = tree();
 

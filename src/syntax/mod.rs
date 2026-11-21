@@ -194,6 +194,10 @@ pub struct OwnershipRules {
     /// The kind of a call's `function` that makes it a method call; its
     /// `field` is the method name.
     pub method_kind: &'static str,
+    /// A call's `function` of this kind wraps the real callee in its own
+    /// `function` field (turbofish: `x.cloned::<u8>()`); it is unwrapped
+    /// before `method_kind` is checked.
+    pub generic_callee_kind: &'static str,
     pub clone_like: &'static [CallShape],
     pub unwrap_like: &'static [CallShape],
     pub macro_kind: &'static str,
