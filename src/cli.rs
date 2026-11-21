@@ -24,6 +24,10 @@ use crate::report::{
 };
 use crate::review::{self, ReviewError};
 
+mod workspace_paths;
+
+use workspace_paths::{github_path_prefix, prefix_comparison_paths, prefix_paths};
+
 #[derive(Debug, Parser)]
 #[command(
     name = "deburr",
@@ -338,13 +342,19 @@ fn compare_command(args: &CompareArgs) -> Result<ExitCode, CliError> {
 
     let before: Report = read_report(&args.before)?;
     let after: Report = read_report(&args.after)?;
-    let comparison = compare::compare(&before, &after);
+    let mut comparison = compare::compare(&before, &after);
     let (source, style) = render_context(
-        args.source.as_deref(),
+        verified_source(args.source.as_deref(), &after),
         &after,
         args.format,
         args.output.is_none(),
     );
+
+    if args.format == Format::Github
+        && let Some(prefix) = github_path_prefix(args.source.as_deref().unwrap_or(Path::new(".")))
+    {
+        prefix_comparison_paths(&mut comparison, &prefix);
+    }
 
     emit(args.output.as_deref(), "write comparison", |out| {
         render::render_comparison(&comparison, &source, style, args.format, out)
@@ -386,7 +396,7 @@ fn review_apply_command(args: &ReviewApplyArgs) -> Result<ExitCode, CliError> {
     let ledger: ReviewLedger = read_json(&args.ledger)?;
     let mut reviewed = review::apply_ledger(&report, &ledger)?.0;
     let (source, style) = render_context(
-        args.source.as_deref(),
+        verified_source(args.source.as_deref(), &reviewed),
         &reviewed,
         args.format,
         args.output.is_none(),
@@ -412,7 +422,7 @@ fn render_command(args: &RenderArgs) -> Result<ExitCode, CliError> {
 
     let mut report = read_report(&args.report)?;
     let (source, style) = render_context(
-        args.source.as_deref(),
+        verified_source(args.source.as_deref(), &report),
         &report,
         args.format,
         args.output.is_none(),
@@ -468,7 +478,11 @@ fn render_context(
     let mut link_base = None;
     let mut path_prefix = String::new();
 
-    if origin.git_known && !origin.dirty && !origin.commit.is_empty() {
+    if origin.git_known
+        && !origin.dirty
+        && !origin.commit.is_empty()
+        && let Some(root) = root
+    {
         let actions = env::var("GITHUB_ACTIONS").is_ok_and(|value| value == "true");
         let hosted = env::var("GITHUB_SERVER_URL")
             .ok()
@@ -481,8 +495,8 @@ fn render_context(
                 server.trim_end_matches('/'),
                 origin.commit
             ));
-            path_prefix = root.and_then(github_path_prefix).unwrap_or_default();
-        } else if let Some(root) = root {
+            path_prefix = github_path_prefix(root).unwrap_or_default();
+        } else {
             link_base = provenance::github_blob_base(root, &origin.commit);
             path_prefix = provenance::repository_prefix(root).unwrap_or_default();
         }
@@ -501,6 +515,43 @@ fn render_context(
         .named(report_name(root, None));
 
     (source, style)
+}
+
+/// `dir` when it provably holds the code `report` describes: the report
+/// records a clean known commit and `dir` is a clean checkout of it.
+/// Otherwise warns and returns `None`, so only locations are rendered.
+fn verified_source<'a>(dir: Option<&'a Path>, report: &Report) -> Option<&'a Path> {
+    let dir = dir?;
+    let origin = &report.provenance.source;
+
+    if !origin.git_known || origin.dirty || origin.commit.is_empty() {
+        say(
+            &mut io::stderr(),
+            &format!(
+                "--source {} ignored: report records no clean git commit; showing locations only",
+                dir.display()
+            ),
+        );
+
+        return None;
+    }
+
+    let matches = provenance::source(dir, "")
+        .is_ok_and(|actual| !actual.dirty && actual.commit == origin.commit);
+
+    if !matches {
+        say(
+            &mut io::stderr(),
+            &format!(
+                "--source {} does not match the report's commit; showing locations only",
+                dir.display()
+            ),
+        );
+
+        return None;
+    }
+
+    Some(dir)
 }
 
 /// Decodes one JSON value, rejecting unknown fields and trailing data.
@@ -626,59 +677,6 @@ fn emit(
     Ok(())
 }
 
-/// The audited directory's path relative to `GITHUB_WORKSPACE` (or the
-/// current directory), when it is inside it.
-fn github_path_prefix(target: &Path) -> Option<String> {
-    let workspace = env::var_os("GITHUB_WORKSPACE")
-        .map(PathBuf::from)
-        .or_else(|| env::current_dir().ok())?;
-    let workspace = fs::canonicalize(workspace).ok()?;
-    let target = fs::canonicalize(target)
-        .ok()
-        .filter(|target| target.is_dir())?;
-    let relative = target.strip_prefix(&workspace).ok()?;
-    let prefix = relative
-        .components()
-        .map(|part| part.as_os_str().to_string_lossy())
-        .collect::<Vec<_>>()
-        .join("/");
-
-    (!prefix.is_empty()).then_some(prefix)
-}
-
-/// Rewrites every source path in `report` to be workspace-relative.
-fn prefix_paths(report: &mut Report, prefix: &str) {
-    let prefixed = |path: &mut String| *path = format!("{prefix}/{path}");
-
-    report
-        .files
-        .iter_mut()
-        .for_each(|file| prefixed(&mut file.path));
-    report
-        .functions
-        .iter_mut()
-        .for_each(|function| prefixed(&mut function.path));
-    report
-        .findings
-        .iter_mut()
-        .for_each(|finding| prefixed(&mut finding.path));
-
-    for clone in &mut report.duplication.clones {
-        clone
-            .endpoints
-            .iter_mut()
-            .for_each(|endpoint| prefixed(&mut endpoint.path));
-    }
-
-    if let Some(ledger) = &mut report.review {
-        for item in &mut ledger.items {
-            item.locations
-                .iter_mut()
-                .for_each(|location| prefixed(&mut location.path));
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use clap::CommandFactory;
@@ -714,5 +712,115 @@ mod tests {
         prefix_paths(&mut report, "sub/dir");
 
         assert_eq!(report.files[0].path, "sub/dir/a.go");
+    }
+
+    #[test]
+    fn prefix_rewrites_every_comparison_path() {
+        use crate::report::{
+            Change, ChangeState, CloneEndpoint, CodeClone, Finding, Function, Location, Position,
+            ReviewItem,
+        };
+
+        let report = audit::empty_report(&AuditOptions {
+            include_tests: true,
+            include_testdata: false,
+            include_vendor: false,
+            include_generated: false,
+            max_file_bytes: None,
+            duplication: None,
+        });
+        let mut comparison = compare::compare(&report, &report);
+        let position = Position { line: 1, column: 1 };
+        let function: Function = serde_json::from_value(serde_json::json!({
+            "id": "f", "path": "a.go", "category": "production", "name": "f",
+            "structural_signals": serde_json::to_value(
+                crate::report::StructuralSignals::default()
+            ).expect("signals"),
+            "start": {"line": 1, "column": 1}, "end": {"line": 2, "column": 1},
+            "sloc": 1, "cyclomatic": 1, "max_nesting": 0, "mass": 1.0,
+            "high_complexity": false
+        }))
+        .expect("function");
+        let finding = Finding {
+            id: "g".to_owned(),
+            fingerprint: String::new(),
+            rule: "r".to_owned(),
+            path: "b.go".to_owned(),
+            severity: "warn".to_owned(),
+            message: "m".to_owned(),
+            details: Vec::new(),
+            start: position,
+            end: position,
+            identity_ambiguous: false,
+        };
+        let endpoint = |path: &str| CloneEndpoint {
+            path: path.to_owned(),
+            start: position,
+            end: position,
+            code_lines: 1,
+            functions: Vec::new(),
+        };
+        let clone = CodeClone {
+            id: "c".to_owned(),
+            family_id: "c".to_owned(),
+            fingerprint: String::new(),
+            category: crate::report::Category::Production,
+            tokens: 1,
+            identity_ambiguous: false,
+            endpoints: [endpoint("c.go"), endpoint("d.go")],
+        };
+        let item = ReviewItem {
+            previous: None,
+            id: "i".to_owned(),
+            kind: crate::report::ReviewKind::Finding,
+            fingerprint: String::new(),
+            status: crate::report::ReviewStatus::Unreviewed,
+            reason_category: String::new(),
+            reason: String::new(),
+            evidence: String::new(),
+            upstream: String::new(),
+            locations: vec![Location {
+                path: "e.go".to_owned(),
+                start: position,
+                end: position,
+            }],
+            stale: false,
+            identity_ambiguous: false,
+        };
+
+        comparison.function_changes.push(Change {
+            state: ChangeState::New,
+            match_basis: None,
+            before: None,
+            after: Some(function),
+            before_review: None,
+            after_review: None,
+            before_ids: Vec::new(),
+            after_ids: Vec::new(),
+        });
+        comparison.new_findings.push(finding);
+        comparison.duplication.after_clones.push(clone);
+        comparison.after_review.items.push(item);
+
+        prefix_comparison_paths(&mut comparison, "sub/dir");
+
+        assert_eq!(
+            comparison.function_changes[0]
+                .after
+                .as_ref()
+                .expect("after")
+                .path,
+            "sub/dir/a.go"
+        );
+        assert_eq!(comparison.new_findings[0].path, "sub/dir/b.go");
+
+        let endpoints = &comparison.duplication.after_clones[0].endpoints;
+
+        assert_eq!(endpoints[0].path, "sub/dir/c.go");
+        assert_eq!(endpoints[1].path, "sub/dir/d.go");
+        assert_eq!(
+            comparison.after_review.items[0].locations[0].path,
+            "sub/dir/e.go"
+        );
     }
 }

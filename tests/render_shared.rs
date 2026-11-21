@@ -115,3 +115,23 @@ fn source_lines_are_read_from_inside_the_root_only() {
     assert_eq!(source.lines("/etc/passwd", 1, 1), None);
     assert_eq!(Source::default().lines("sub/a.go", 1, 1), None);
 }
+
+#[cfg(unix)]
+#[test]
+fn source_lines_refuse_symlinks_that_leave_the_root() {
+    use std::os::unix::fs::symlink;
+
+    let root = tempfile::tempdir().expect("tempdir");
+    let outside = tempfile::tempdir().expect("tempdir");
+    std::fs::write(outside.path().join("secret.go"), "secret\n").expect("write");
+    symlink(
+        outside.path().join("secret.go"),
+        root.path().join("file_link.go"),
+    )
+    .expect("file symlink");
+    symlink(outside.path(), root.path().join("dir_link")).expect("dir symlink");
+    let source = Source::new(Some(root.path().to_path_buf()), None, String::new());
+
+    assert_eq!(source.lines("file_link.go", 1, 1), None);
+    assert_eq!(source.lines("dir_link/secret.go", 1, 1), None);
+}

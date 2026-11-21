@@ -351,16 +351,11 @@ runs:
         fi
 
         # Workflow commands on stdout become annotations, so print exactly one
-        # set. Comparison commands carry workspace-relative paths only when
-        # the audited directory is the workspace root, so a subdirectory keeps
-        # the audit's annotations.
+        # set. A successful comparison rewrites its paths to be
+        # workspace-relative, so it replaces the audit's annotations.
         annotations="$(file_for github)"
         if [[ -f "$invocation_dir/comparison.github" ]]; then
-          workspace_root=$(cd "$GITHUB_WORKSPACE" && pwd -P)
-          audited_root=$(cd "$source_dir" && pwd -P)
-          if [[ "$workspace_root" == "$audited_root" ]]; then
-            annotations="$invocation_dir/comparison.github"
-          fi
+          annotations="$invocation_dir/comparison.github"
         fi
         cat "$annotations"
 

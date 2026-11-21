@@ -83,7 +83,7 @@ impl Source {
     }
 
     /// Lines `start..=end` (1-based) of `root/path`. `None` without a root,
-    /// when the file cannot be read, when `path` leaves the root, or when the
+    /// when the file cannot be read, when `path` leaves the root (including through symlinks), or when the
     /// file is shorter than `end`.
     #[must_use]
     pub fn lines(&self, path: &str, start: u32, end: u32) -> Option<Vec<String>> {
@@ -99,7 +99,16 @@ impl Source {
             return None;
         }
 
-        let text = fs::read_to_string(root.join(relative)).ok()?;
+        // Canonicalize both sides so a symlinked file or directory cannot
+        // lead outside the root.
+        let root = fs::canonicalize(root).ok()?;
+        let candidate = fs::canonicalize(root.join(relative)).ok()?;
+
+        if !candidate.starts_with(&root) {
+            return None;
+        }
+
+        let text = fs::read_to_string(candidate).ok()?;
         let skipped = usize::try_from(start - 1).ok()?;
         let wanted = usize::try_from(end - start + 1).ok()?;
         let lines: Vec<String> = text

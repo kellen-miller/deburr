@@ -283,3 +283,22 @@ fn review_needs_a_subcommand() {
     assert_eq!(code(&deburr(&["review"])), 2);
     assert_eq!(code(&deburr(&["review", "apply", "report.json"])), 2);
 }
+
+#[test]
+fn render_ignores_a_source_that_does_not_match_the_report() {
+    let elsewhere = tempfile::tempdir().expect("tempdir");
+    let (tree, report) = audited_report(&elsewhere);
+    let output = deburr(&[
+        "render",
+        report.to_str().expect("utf-8 path"),
+        "--format",
+        "html",
+        "--source",
+        tree.path().to_str().expect("utf-8 path"),
+    ]);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert_eq!(code(&output), 0, "stderr: {}", stderr(&output));
+    assert!(!stdout.contains("return 1"), "snippet leaked into output");
+    assert!(stderr(&output).contains("showing locations only"));
+}
