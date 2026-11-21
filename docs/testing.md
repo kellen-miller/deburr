@@ -9,8 +9,16 @@ needs to be installed: clone detection is built in.
   compare, review, renderers).
 - `tests/*.rs` drive the library and the binary: `cli.rs` (exit codes and
   flags), `go_analysis.rs`, `go_findings.rs`, `typescript_analysis.rs`,
-  `audit.rs`, `compare.rs`, `review.rs`, `render.rs`, and `duplication.rs`.
-- `tests/corpus/` holds Go and TypeScript fixtures. `tests/corpus/dup` is a
+  `rust_analysis.rs`, `rust_inline_tests.rs`, `rust_signals.rs`,
+  `rust_findings.rs`, `audit.rs`, `compare.rs`, `review.rs`, `render.rs`, and
+  `duplication.rs`.
+- `tests/corpus/` holds Go, TypeScript, and Rust fixtures. The Rust fixtures
+  are under `tests/corpus/rust/` (`constructs` for exact names and metrics,
+  `inline` for inline tests, `layout` for `tests/` and `benches/` paths). The
+  Go version never analyzed Rust, so there is nothing to project from it: Rust
+  behavior is pinned by exact assertions in the `rust_*.rs` tests, and
+  `tests/corpus/rust` is deliberately not one of the parity harness's corpus
+  roots. `tests/corpus/dup` is a
   clean fixture with known clones; the Action and release smoke tests audit it.
   The corpus also contains deliberately malformed files, so `deburr audit .` at
   the repository root exits 1 by design.
@@ -100,6 +108,12 @@ without a Go toolchain.
 
 IDs, fingerprints, condition text, float formatting, parse-error text, and HTML
 bytes are not projected. Duplication is excluded because the engine changed.
+
+The projection skips `.rs` files. The Go version reports them `unsupported`,
+so every Rust file, function, and finding could only differ; the projection
+drops them and takes their share out of the coverage and metrics totals before
+diffing. Go and TypeScript stay fully guarded, and `tests/parity/accepted.toml`
+says so in its header.
 
 To compare against the Go version again (for example after a grammar update),
 build it from the last commit that contains it (the parent of the commit that

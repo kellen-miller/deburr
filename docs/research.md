@@ -1,13 +1,13 @@
 # Research notes
 
 These notes record external references and design decisions behind Deburr's
-deterministic Go and TypeScript analyzer. The CLI owns analysis and report
+deterministic Go, TypeScript, and Rust analyzer. The CLI owns analysis and report
 generation, and the cleanup guide consumes its evidence without invoking a
 model or applying automatic refactors.
 
 ## Current boundary
 
-Deburr is a single Rust binary that analyzes Go and TypeScript. Its reports
+Deburr is a single Rust binary that analyzes Go, TypeScript, and Rust. Its reports
 preserve raw measurements, source locations, coverage, and compatibility
 identities so a later comparison can distinguish a code change from a
 measurement change. Findings, complexity, signals, and clones share function
@@ -48,7 +48,16 @@ Findings from the crate investigation that shaped the design:
 
 Two tree-sitter grammars are patched in forks where upstream releases lag the
 languages (TypeScript import types and Go generic methods). Both forks are
-carried until upstream releases a fix.
+carried until upstream releases a fix. The Rust grammar needs no fork: the
+crates.io `tree-sitter-rust` release parsed every `.rs` file in ten local Rust
+repositories without an error node.
+
+Rust is analyzed by the same engine through a third rules table, with
+TypeScript-level parity (function metrics, both findings, `nested_branches`)
+plus four ownership and panic signals. Inline tests are split at function
+level instead of by file, the `?` operator counts as a decision, and
+production and inline-test code never pair as clones. Deburr does not expand
+macros or run Cargo, so code inside macro bodies is not measured.
 
 ## Sources
 
@@ -71,8 +80,8 @@ carried until upstream releases a fix.
   library crate that Deburr links to find clones. It runs in-process on
   Deburr's own tokens, is pinned to an exact version, and its detection
   settings (minimum tokens and lines) are recorded in the report.
-- [tree-sitter](https://tree-sitter.github.io/) is the parser for Go and
-  TypeScript, so each file is parsed once for metrics, findings, and clones.
+- [tree-sitter](https://tree-sitter.github.io/) is the parser for Go,
+  TypeScript, and Rust, so each file is parsed once for metrics, findings, and clones.
 
 ## Lessons from Trellis
 
