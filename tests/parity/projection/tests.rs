@@ -51,10 +51,10 @@ fn mixed_report() -> Value {
         "metrics": {
             "all": {"code_lines": 10, "functions": 2, "cyclomatic": 13, "max_nesting": 4,
                 "mass": 13.0, "high_complexity_functions": 1, "high_complexity_mass": 11.0,
-                "high_complexity_mass_share": 0.5},
+                "high_complexity_mass_share": 0.846_153_846_153_846_2},
             "production": {"code_lines": 10, "functions": 2, "cyclomatic": 13, "max_nesting": 4,
                 "mass": 13.0, "high_complexity_functions": 1, "high_complexity_mass": 11.0,
-                "high_complexity_mass_share": 0.5},
+                "high_complexity_mass_share": 0.846_153_846_153_846_2},
             "test": {"code_lines": 0, "functions": 0, "cyclomatic": 0, "max_nesting": 0,
                 "mass": 0.0, "high_complexity_functions": 0, "high_complexity_mass": 0.0,
                 "high_complexity_mass_share": null},
@@ -169,6 +169,12 @@ fn corrupted_aggregates_survive_the_projection() {
             field: "max_nesting",
             value: json!(2),
         },
+        // Inconsistent with the reported masses (11 / 13).
+        Corruption {
+            bucket: "production",
+            field: "high_complexity_mass_share",
+            value: json!(0.5),
+        },
         // The test bucket holds no Rust function, so it is kept as reported.
         Corruption {
             bucket: "test",
@@ -198,6 +204,29 @@ fn corrupted_aggregates_survive_the_projection() {
 }
 
 #[test]
+fn underreported_nesting_equal_to_the_rust_maximum_survives() {
+    // The Go function nests 5 deep, but the report claims the maximum is
+    // the Rust function's 4.
+    let mut report = mixed_report();
+    report["functions"][0]["max_nesting"] = json!(5);
+
+    let projected = project(&report);
+    let mut go = go_only_report();
+    go["functions"][0]["max_nesting"] = json!(5);
+    go["metrics"]["all"]["max_nesting"] = json!(5);
+    go["metrics"]["production"]["max_nesting"] = json!(5);
+
+    let differences = diff(&project(&go), &projected);
+
+    assert!(
+        differences
+            .iter()
+            .any(|difference| difference.field == "max_nesting"),
+        "underreported nesting vanished: {differences:?}"
+    );
+}
+
+#[test]
 fn rust_inline_test_functions_leave_the_test_bucket_totals() {
     let mut report = mixed_report();
     let test_function = json!({
@@ -216,6 +245,8 @@ fn rust_inline_test_functions_leave_the_test_bucket_totals() {
     report["metrics"]["test"]["cyclomatic"] = json!(3);
     report["metrics"]["test"]["max_nesting"] = json!(1);
     report["metrics"]["test"]["mass"] = json!(3.0);
+    report["metrics"]["all"]["high_complexity_mass_share"] = json!(11.0 / 16.0);
+    report["metrics"]["test"]["high_complexity_mass_share"] = json!(0.0);
 
     let go = project(&go_only_report());
 

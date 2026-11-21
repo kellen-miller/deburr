@@ -291,8 +291,9 @@ fn bucket_lines(file: &Value, bucket: &str) -> i64 {
 /// cannot account for it, recomputed from the remaining functions when the
 /// removed ones alone could have set it, and projected as null (a certain
 /// difference) when it is below a removed function's own nesting, which no
-/// consistent report produces. The high complexity share is derived from the
-/// residual mass figures.
+/// consistent report produces, or when the remaining functions nest deeper.
+/// The high complexity share is derived from the residual mass figures only
+/// when the reported share matched the reported masses; otherwise it is kept.
 fn recompute_metrics(report: &mut Value, files: &[Value], functions: &[Value]) {
     for bucket in ["all", "production", "test"] {
         let in_bucket = |function: &&Value| {
@@ -330,6 +331,19 @@ fn recompute_metrics(report: &mut Value, files: &[Value], functions: &[Value]) {
             .max()
             .unwrap_or_default();
         let metrics = &mut report["metrics"][bucket];
+        // Whether the reported share matched the reported masses before
+        // projection; a share that did not is kept, so it reaches the diff.
+        let share_consistent = match (
+            metrics["mass"].as_f64(),
+            metrics["high_complexity_mass"].as_f64(),
+            metrics["high_complexity_mass_share"].as_f64(),
+        ) {
+            (Some(mass), Some(high), Some(share)) if mass != 0.0 => {
+                (high / mass - share).abs() < 1e-9
+            }
+            (Some(mass), _, None) => mass == 0.0,
+            _ => false,
+        };
 
         if let Some(lines) = metrics["code_lines"].as_i64() {
             metrics["code_lines"] = Value::from(lines - removed_lines);
@@ -354,9 +368,16 @@ fn recompute_metrics(report: &mut Value, files: &[Value], functions: &[Value]) {
         if let Some(reported) = metrics["max_nesting"].as_i64() {
             metrics["max_nesting"] = match reported.cmp(&gone.max_nesting) {
                 Ordering::Less => Value::Null,
+                // The remaining functions nest deeper than the reported
+                // maximum, so the report underreported it.
+                Ordering::Equal if remaining_max_nesting > reported => Value::Null,
                 Ordering::Equal => Value::from(remaining_max_nesting),
                 Ordering::Greater => Value::from(reported),
             };
+        }
+
+        if !share_consistent {
+            continue;
         }
 
         metrics["high_complexity_mass_share"] = match (

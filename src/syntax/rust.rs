@@ -384,95 +384,113 @@ fn impl_path(item: Node<'_>, source: &[u8]) -> String {
     }
 }
 
-/// The text of a type with every `type_arguments` node (and comment) cut out
-/// and whitespace collapsed, so `Foo<T>` is `Foo` but tuple, array,
-/// reference, pointer, and qualified structure stays:
-/// `(&'a Mesh<f32>, &'a Mesh<f32>)` is `(&'a Mesh, &'a Mesh)` and
-/// `<A as B>::C` is whole.
+/// The canonical text of a type with every `type_arguments` node (and
+/// comment) cut out, so `Foo<T>` is `Foo` but tuple, array, reference,
+/// pointer, and qualified structure stays: `(&'a Mesh<f32>, &'a Mesh<f32>)`
+/// is `(&'a Mesh, &'a Mesh)` and `<A as B>::C` is whole.
+///
+/// The text is rebuilt from the type's tokens with one spacing rule and
+/// without optional trailing commas, so source layout (rustfmt's or
+/// anyone's) never changes the name. A one-element tuple keeps its comma,
+/// because `(A,)` and `(A)` are different types.
 fn without_type_arguments(ty: Node<'_>, source: &[u8]) -> String {
-    let mut cut: Vec<Range<usize>> = Vec::new();
-    let mut pending = vec![ty];
+    let mut tokens: Vec<String> = Vec::new();
+    let mut cursor = ty.walk();
+    let mut descend = true;
 
-    while let Some(node) = pending.pop() {
-        if node.kind() == "type_arguments" || is_comment(node) {
-            cut.push(node.byte_range());
+    loop {
+        let node = cursor.node();
+        let atomic = matches!(
+            node.kind(),
+            "lifetime" | "string_literal" | "raw_string_literal" | "char_literal"
+        );
 
-            continue;
+        if descend {
+            if node.kind() == "type_arguments" {
+                // A turbofish `Vec::<u8>` loses its `::` with its arguments.
+                if tokens.last().is_some_and(|token| token == "::") {
+                    tokens.pop();
+                }
+            } else if is_comment(node) {
+            } else if atomic || node.child_count() == 0 {
+                if !(node.kind() == "," && is_optional_comma(node)) {
+                    tokens.push(String::from_utf8_lossy(&source[node.byte_range()]).into_owned());
+                }
+            } else if cursor.goto_first_child() {
+                continue;
+            }
         }
 
-        let mut cursor = node.walk();
+        if node.id() == ty.id() {
+            break;
+        }
 
-        pending.extend(node.children(&mut cursor));
+        if cursor.goto_next_sibling() {
+            descend = true;
+        } else if cursor.goto_parent() {
+            descend = false;
+        } else {
+            break;
+        }
     }
-
-    cut.sort_by_key(|range| range.start);
 
     let mut text = String::new();
-    let mut at = ty.start_byte();
+    let mut previous: Option<&str> = None;
 
-    for range in cut {
-        text.push_str(&String::from_utf8_lossy(&source[at..range.start]));
+    for token in &tokens {
+        if let Some(before) = previous {
+            let spaced = token != ")"
+                && (matches!(
+                    before,
+                    "," | ";" | "+" | "=" | "->" | "mut" | "dyn" | "impl"
+                ) || matches!(token.as_str(), "+" | "=" | "->")
+                    || (is_word(token) && (is_word(before) || before == ">")));
 
-        // A turbofish `Vec::<u8>` loses its `::` with its arguments.
-        if source[range.start] == b'<' {
-            if text.trim_end().ends_with("::") {
-                text.truncate(text.trim_end().len() - 2);
+            if spaced {
+                text.push(' ');
             }
-        } else {
-            // A comment separates the tokens around it.
-            text.push(' ');
         }
 
-        at = range.end;
+        text.push_str(token);
+        previous = Some(token);
     }
 
-    text.push_str(&String::from_utf8_lossy(&source[at..ty.end_byte()]));
-
-    let spaced = text
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-        .replace(" ::", "::")
-        .replace(":: ", "::")
-        .replace("( ", "(")
-        .replace(" )", ")")
-        .replace("[ ", "[")
-        .replace(" ]", "]")
-        .replace(" ,", ",");
-
-    without_layout_commas(&spaced)
+    text
 }
 
-/// Drops the trailing comma rustfmt adds to a multi-line tuple, so
-/// `(A, B,)` and `(A, B)` name the same type. A one-element tuple keeps its
-/// comma, because `(A,)` and `(A)` are different types.
-fn without_layout_commas(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    // Top-level comma count of each open parenthesis.
-    let mut commas: Vec<usize> = Vec::new();
+/// Whether a comma is a trailing comma the type means the same without:
+/// one followed only by its list's closing delimiter, except the comma of a
+/// one-element tuple.
+fn is_optional_comma(comma: Node<'_>) -> bool {
+    let mut next = comma.next_sibling();
 
-    for ch in text.chars() {
-        match ch {
-            '(' => commas.push(0),
-            ',' => {
-                if let Some(count) = commas.last_mut() {
-                    *count += 1;
-                }
-            }
-            ')' => {
-                let count = commas.pop().unwrap_or_default();
-
-                if count > 1 && out.ends_with(',') {
-                    out.pop();
-                }
-            }
-            _ => {}
-        }
-
-        out.push(ch);
+    while let Some(node) = next.filter(|node| is_comment(*node)) {
+        next = node.next_sibling();
     }
 
-    out
+    if next.is_some_and(|node| node.is_named()) {
+        return false;
+    }
+
+    let Some(parent) = comma.parent() else {
+        return false;
+    };
+    let mut cursor = parent.walk();
+    let elements = parent
+        .named_children(&mut cursor)
+        .filter(|node| !is_comment(*node))
+        .count();
+
+    !(matches!(parent.kind(), "tuple_type" | "tuple_expression") && elements == 1)
+}
+
+/// Whether a token starts like a word, so two in a row need a space:
+/// identifiers, keywords, numbers, lifetimes, and literals.
+fn is_word(token: &str) -> bool {
+    token
+        .chars()
+        .next()
+        .is_some_and(|ch| ch.is_alphanumeric() || matches!(ch, '_' | '\'' | '"'))
 }
 
 fn field_text(node: Node<'_>, field: &str, source: &[u8]) -> Option<String> {

@@ -241,3 +241,59 @@ fn impl_names_do_not_depend_on_layout() {
         ["<(u8, u16) as Shape>::area", "<(u8,) as Shape>::side"]
     );
 }
+
+#[test]
+fn impl_names_ignore_spacing_and_optional_commas() {
+    // Each pair spells one type two ways rustfmt can leave or produce.
+    let loose = tree();
+    write(
+        loose.path(),
+        "src/lib.rs",
+        "impl A for (u8,u16) { fn a(&self) {} }\nimpl A for [u8;4] { fn b(&self) {} }\nimpl A for &(dyn Send+Sync) { fn c(&self) {} }\nimpl A for fn(u8,) { fn d(&self) {} }\nimpl A for &dyn Fn(u8,) { fn e(&self) {} }\n",
+    );
+    let tidy = tree();
+    write(
+        tidy.path(),
+        "src/lib.rs",
+        "impl A for (u8, u16) { fn a(&self) {} }\nimpl A for [u8; 4] { fn b(&self) {} }\nimpl A for &(dyn Send + Sync) { fn c(&self) {} }\nimpl A for fn(u8) { fn d(&self) {} }\nimpl A for &dyn Fn(u8) { fn e(&self) {} }\n",
+    );
+
+    let loose = audit_root(loose.path()).report;
+    let tidy = audit_root(tidy.path()).report;
+
+    assert_eq!(names(&loose), names(&tidy));
+    assert_eq!(
+        names(&tidy),
+        [
+            "<(u8, u16) as A>::a",
+            "<[u8; 4] as A>::b",
+            "<&(dyn Send + Sync) as A>::c",
+            "<fn(u8) as A>::d",
+            "<&dyn Fn(u8) as A>::e",
+        ]
+    );
+}
+
+#[test]
+fn one_element_tuples_keep_their_comma_inside_nested_lists() {
+    // The commas inside the binder, the parameters, and the const block are
+    // not the tuple's, so each tuple keeps its own and stays distinct from
+    // the parenthesized type.
+    let root = tree();
+    write(
+        root.path(),
+        "src/lib.rs",
+        "impl A for (for<'a, 'b> fn(&'a u8, &'b u8),) { fn a(&self) {} }\nimpl A for (for<'a, 'b> fn(&'a u8, &'b u8)) { fn b(&self) {} }\nimpl A for ([u8; { let x = [1, 2]; x[0] }],) { fn c(&self) {} }\n",
+    );
+
+    let report = audit_root(root.path()).report;
+
+    assert_eq!(
+        names(&report),
+        [
+            "<(for<'a, 'b> fn(&'a u8, &'b u8),) as A>::a",
+            "<(for<'a, 'b> fn(&'a u8, &'b u8)) as A>::b",
+            "<([u8; {let x = [1, 2]; x[0]}],) as A>::c",
+        ]
+    );
+}
