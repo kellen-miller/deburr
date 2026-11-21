@@ -41,7 +41,7 @@ fn help_exits_zero_and_lists_commands() {
 
     assert_eq!(code(&output), 0);
 
-    for command in ["audit", "compare", "review", "guide"] {
+    for command in ["audit", "compare", "render", "review", "guide"] {
         assert!(stdout.contains(command), "help should mention {command}");
     }
 }
@@ -163,6 +163,108 @@ fn audit_writes_json_report_to_stdout() {
     assert_eq!(code(&output), 0, "stderr: {}", stderr(&output));
     assert!(stdout.ends_with("}\n"));
     assert!(stdout.contains("\"schema_version\": \"3\""));
+}
+
+/// Audits a one-file Go tree to JSON; returns the tree and the report path.
+fn audited_report(output_dir: &tempfile::TempDir) -> (tempfile::TempDir, std::path::PathBuf) {
+    let tree = tempfile::tempdir().expect("tempdir");
+    fs::write(
+        tree.path().join("a.go"),
+        "package a\n\nfunc One() int {\n\treturn 1\n}\n",
+    )
+    .expect("write source");
+
+    let report = output_dir.path().join("report.json");
+    let output = deburr(&[
+        "audit",
+        tree.path().to_str().expect("utf-8 path"),
+        "--format",
+        "json",
+        "--quiet",
+        "--output",
+        report.to_str().expect("utf-8 path"),
+    ]);
+
+    assert_eq!(code(&output), 0, "stderr: {}", stderr(&output));
+
+    (tree, report)
+}
+
+#[test]
+fn render_round_trips_an_audit_report_into_every_format() {
+    let elsewhere = tempfile::tempdir().expect("tempdir");
+    let (tree, report) = audited_report(&elsewhere);
+    let report_arg = report.to_str().expect("utf-8 path");
+
+    for format in ["text", "markdown", "html", "github"] {
+        let output = deburr(&["render", report_arg, "--format", format]);
+
+        assert_eq!(code(&output), 0, "{format}: {}", stderr(&output));
+        assert!(
+            !output.stdout.is_empty(),
+            "{format} rendered nothing: {}",
+            stderr(&output)
+        );
+    }
+
+    let json = deburr(&["render", report_arg, "--format", "json"]);
+    assert_eq!(code(&json), 0, "stderr: {}", stderr(&json));
+    assert_eq!(
+        String::from_utf8_lossy(&json.stdout),
+        fs::read_to_string(&report).expect("read report"),
+        "json render must reproduce the audit's JSON"
+    );
+
+    let rendered = elsewhere.path().join("out.txt");
+    let written = deburr(&[
+        "render",
+        report_arg,
+        "--source",
+        tree.path().to_str().expect("utf-8 path"),
+        "--output",
+        rendered.to_str().expect("utf-8 path"),
+    ]);
+
+    assert_eq!(code(&written), 0, "stderr: {}", stderr(&written));
+    assert!(rendered.is_file(), "--output must write the file");
+    assert!(
+        !String::from_utf8_lossy(&fs::read(&rendered).expect("read output")).contains('\u{1b}'),
+        "output files never contain color codes"
+    );
+}
+
+#[test]
+fn render_validates_output_like_the_other_commands() {
+    let elsewhere = tempfile::tempdir().expect("tempdir");
+    let (_tree, report) = audited_report(&elsewhere);
+    let report_arg = report.to_str().expect("utf-8 path");
+
+    assert_eq!(code(&deburr(&["render", report_arg, "--output", "-"])), 2);
+    assert_eq!(
+        code(&deburr(&["render", report_arg, "--output", report_arg])),
+        2,
+        "output may not overwrite the input report"
+    );
+    assert_eq!(
+        code(&deburr(&[
+            "render",
+            report_arg,
+            "--output",
+            elsewhere.path().to_str().expect("utf-8 path")
+        ])),
+        2,
+        "output may not be a directory"
+    );
+}
+
+#[test]
+fn render_rejects_bad_input() {
+    assert_eq!(code(&deburr(&["render"])), 2);
+    assert_eq!(
+        code(&deburr(&["render", "report.json", "--format", "yaml"])),
+        2
+    );
+    assert_eq!(code(&deburr(&["render", "/no/such/report.json"])), 1);
 }
 
 #[test]
