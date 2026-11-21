@@ -21,7 +21,7 @@ Deburr is one Cargo package: a library and a thin binary (`src/main.rs` calls
 | `duplication` | The only module that imports `cpd-core` |
 | `report` | The serialized schema and its validation |
 | `review`, `compare` | The review ledger and report comparison, on `Report` values only |
-| `render` | Text, JSON, HTML, and GitHub workflow-command output |
+| `render` | JSON, plus the human formats (text, markdown, HTML, GitHub workflow commands) over one shared summary |
 | `provenance` | The audited tree's Git state and the build's version |
 
 Per-language knowledge lives in one table per language, so adding a language
@@ -223,6 +223,61 @@ An item marked `identity_ambiguous` may carry a decided review only when the
 ledger's `source_manifest_digest` is known and matches the current report's
 manifest. Named, unambiguous items continue to match by fingerprint when the
 manifest changes.
+
+## Report formats
+
+JSON is the only stable interface. It carries every fact in the report under
+the schema version, and `compare` and `review` read it. `text`, `markdown`,
+`html`, and `github` are human formats with no stability promise: their
+wording, ordering, and layout may change in any release.
+
+The human formats do not mirror the schema. `render::summary` computes one
+summary from a report (or a comparison) and each renderer lays it out for its
+medium at a different depth:
+
+- A verdict on complexity, duplication, and findings, in words, with limits
+  shown next to numbers.
+- Setup hints: unparsed files, and a category-skew hint when most over-limit
+  production functions or copied production lines sit in tooling or test-like
+  directories (`hack`, `test`, `e2e`, `scripts`, ...).
+- One ranked worklist: findings first, then production items, then test items,
+  each by size. Clone pairs collapse into groups through a union-find over the
+  outermost functions each clone endpoint overlaps. Items settled in review
+  (`retained`, `refactored`) are hidden and counted; deferred items stay.
+- Rule-based advice chosen from an item's own signals (nesting, guard
+  clauses, same-file or cross-package copies, repeated test bodies).
+- Concentration by production directory.
+
+Clone groups, the worklist, and the wording are derived in the render layer.
+They add no schema fields and do not change how `compare` matches items.
+`text`, `markdown`, and `github` show the verdict, hints, and top items. `html`
+adds every item with its source, every function, and the full JSON report
+embedded as `<script type="application/json" id="deburr-report">`, with `<`
+escaped so report text cannot end the element.
+
+Links and snippets are not stored in the report. The CLI builds a
+`render::Source` from where rendering happens: a source root for snippets, and a
+permalink base (`blob/<commit>`) when the commit is known and clean and the
+remote is GitHub (in Actions, from `GITHUB_SERVER_URL` and `GITHUB_REPOSITORY`).
+Without them locations print as `file:line`. `deburr render <report.json>` writes
+any format from a saved report.
+
+## GitHub Action outputs
+
+The Action audits once, to `report.json`, and renders `html`, `markdown`,
+`github`, and the requested format from it, so a run analyzes the tree once.
+It prints the `github` render to the log (annotations), appends the markdown to
+`$GITHUB_STEP_SUMMARY`, and uploads `report.json` and `report.html` as an
+artifact.
+
+On pull requests it also audits the base commit in a temporary `git worktree`
+(removed on exit) with the head audit's clone settings, runs `compare`, prepends
+the comparison to the summary, and prints the comparison's annotations, which
+cover only items that got worse. Annotation paths for the comparison are not
+rewritten relative to the workspace, so they are used only when the audited
+directory is the workspace root. Every failure in this path (fetch, worktree,
+base audit, incompatible reports) is downgraded to a note in the summary and
+the whole-repository annotations. The job's status is always the head audit's.
 
 ## Comparison identity
 
