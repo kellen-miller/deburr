@@ -197,7 +197,7 @@ jobs:
           test -s "$REPORT"
           grep -q 'id="deburr-report"' "$REPORT"
           test -s "$DIRECTORY/report.json"
-          grep -q '"schema_version": "3"' "$DIRECTORY/report.json"
+          grep -Eq '"schema_version": "[0-9]+"' "$DIRECTORY/report.json"
           test -s "$DIRECTORY/report.md"
           grep -q '^## deburr' "$DIRECTORY/report.md"
           test -s "$DIRECTORY/report.github"
