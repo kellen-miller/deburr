@@ -51,7 +51,26 @@ fi
 test ! -e "$work/wrong-version/$binary"
 
 printf '== corrupted checksum is refused\n'
-sed 's/^./0/' "$work/dist/SHA256SUMS" > "$work/dist/SHA256SUMS.corrupt"
+# Flip the first hex digit of the digest to a different digit, so the
+# corruption always changes the file (a fixed replacement is a no-op for the
+# one digest in sixteen that already starts with it).
+first_digit=$(cut -c1 "$work/dist/SHA256SUMS")
+if [[ $first_digit == 0 ]]; then
+  replacement=1
+else
+  replacement=0
+fi
+
+{
+  printf '%s' "$replacement"
+  tail -c +2 "$work/dist/SHA256SUMS"
+} > "$work/dist/SHA256SUMS.corrupt"
+
+if cmp -s "$work/dist/SHA256SUMS" "$work/dist/SHA256SUMS.corrupt"; then
+  printf 'the corrupted checksum file is identical to the original\n' >&2
+  exit 1
+fi
+
 mv "$work/dist/SHA256SUMS.corrupt" "$work/dist/SHA256SUMS"
 if bash scripts/install-deburr.sh "$version" "$host" "$work/dist" "$work/corrupt"; then
   printf 'corrupted checksum was accepted\n' >&2

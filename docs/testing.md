@@ -40,11 +40,53 @@ with `cargo build --release --locked`. The tests assert that duplication is
 large `min-clone-tokens` removes the clones, and that an invalid
 `min-clone-lines` fails.
 
+The corrupted-checksum case flips the first hex digit of the digest to a
+different digit and asserts the file changed before running the negative test,
+so it cannot silently become a no-op.
+
+`action-hostile-config-tests` plants a `.cargo/config.toml` in the workspace
+(`build.target` set to a bogus triple, a `build.rustc-wrapper` script that
+fails, and a `build.target-dir`) together with the matching `RUSTC_WRAPPER`,
+`CARGO_BUILD_TARGET`, and `CARGO_TARGET_DIR` environment variables, then runs
+`uses: ./` and requires a measured audit and no `target` or `hostile-target`
+directory in the workspace. The Action builds a copy of its own source under
+`$RUNNER_TEMP`, outside the workspace and any `.cargo` directory, with an
+explicit `--target-dir` and the wrapper, target, target-dir, and rustflags
+environment overrides cleared, so the audited repository's Cargo configuration
+cannot redirect the build or run its code.
+
+## Release flow
+
+`.github/workflows/release.yaml` never exposes a tag or a published release
+without verified assets:
+
+1. `version` runs the shared release action with `dry-run: 'true'`, which only
+   computes the next version.
+2. `build` compiles and smoke-tests the five targets and uploads the archives
+   as workflow artifacts.
+3. One `release` job writes `SHA256SUMS` and runs `scripts/install-deburr.sh`
+   against the local directory. This step also runs in the manual dry run.
+4. On a real release it creates a draft with
+   `gh release create v<version> --draft --target <sha>` (GitHub creates the tag
+   only when the draft is published), uploads every asset, downloads them back
+   with `gh release download`, verifies the checksums and the install script
+   against that copy, and only then runs `gh release edit --draft=false`.
+5. Any failure or cancellation before publishing deletes the draft.
+6. After publishing, the job runs `scripts/install-deburr.sh` against the real
+   HTTPS download URL (with a few retries for CDN lag). If that fails, the
+   release is turned back into a draft (`gh release edit --draft=true`) and the
+   job fails with a message. The tag stays at the released commit, so delete the
+   draft and the tag before re-running.
+
+An existing tag or published release for the version stops the job before
+anything is created; a leftover draft from an interrupted run is replaced.
+
 ## Release dry run
 
 Run the `Release` workflow manually (`workflow_dispatch`, `dry-run` left at
-`true`). It builds and smoke-tests all five targets with a placeholder version
-and skips the publish job, so no release or tag is created.
+`true`). It builds and smoke-tests all five targets with a placeholder version,
+assembles `SHA256SUMS`, and checks the install script against the archives. It
+creates no draft, release, or tag.
 
 ## Parity with the Go version
 

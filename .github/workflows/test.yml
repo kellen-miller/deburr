@@ -172,6 +172,70 @@ jobs:
         shell: bash
         run: test "$OUTCOME" = failure
 
+  action-hostile-config-tests:
+    name: GitHub Actions / Hostile Cargo config (${{ matrix.os }})
+    needs: deburr-paths
+    if: ${{ !cancelled() && (needs.deburr-paths.result != 'success' || fromJSON(needs.deburr-paths.outputs.changes).action) }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      # The audited workspace is untrusted. Its Cargo configuration must not
+      # change how the Action builds Deburr: a bogus build.target would move or
+      # break the output, a failing rustc-wrapper would run repository code,
+      # and build.target-dir would put the binary elsewhere.
+      - name: Plant a hostile Cargo configuration in the workspace
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '#!/bin/sh\necho "hostile rustc-wrapper ran" >&2\nexit 1\n' > hostile-wrapper.sh
+          chmod +x hostile-wrapper.sh
+          mkdir -p .cargo
+          {
+            printf '[build]\n'
+            printf "target = 'bogus-unknown-nothing'\n"
+            printf "rustc-wrapper = '%s/hostile-wrapper.sh'\n" "$GITHUB_WORKSPACE"
+            printf "target-dir = 'hostile-target'\n"
+          } > .cargo/config.toml
+          cat .cargo/config.toml
+
+      - name: Audit with the hostile configuration present
+        id: audit
+        uses: ./
+        env:
+          RUSTC_WRAPPER: ${{ github.workspace }}/hostile-wrapper.sh
+          CARGO_BUILD_TARGET: bogus-unknown-nothing
+          CARGO_TARGET_DIR: ${{ github.workspace }}/hostile-target
+        with:
+          path: tests/corpus/dup
+          format: json
+
+      - name: Verify the audit succeeded and the workspace was not used
+        env:
+          REPORT: ${{ steps.audit.outputs.report }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s "$REPORT"
+          grep -q '"status": "measured"' "$REPORT"
+          for leftover in hostile-target target; do
+            if test -e "$leftover"; then
+              printf '%s was created in the workspace\n' "$leftover" >&2
+              exit 1
+            fi
+          done
+
   typescript-integration-tests:
     name: TypeScript integration tests (VS Code)
     needs: deburr-paths

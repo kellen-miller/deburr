@@ -1,10 +1,15 @@
 name: Release
 
-# A tag never exists without its binaries: the version is computed without
-# publishing, five targets are built and smoke-tested, the install script
-# verifies the assembled checksums, and only then is the release created and
-# the assets attached. If the upload fails the release and tag are deleted so
-# a re-run starts clean.
+# A tag or published release never exists without verified binaries. The
+# shared release action only computes the version (dry-run mode); five targets
+# are built and smoke-tested; one job writes SHA256SUMS and runs the install
+# script against the local archives. Publishing then goes through a draft
+# release (GitHub creates the tag only when the draft is published): create the
+# draft, upload every asset, download them back and verify the checksums, and
+# only then publish. A failure before publishing deletes the draft; a failed
+# install from the real download URL after publishing turns the release back
+# into a draft. A manual dry run performs the assembly and verification but
+# creates nothing.
 
 on:
   push:
@@ -151,22 +156,25 @@ jobs:
           path: dist/deburr-*
           if-no-files-found: error
 
-  publish:
-    name: Publish release
+  release:
+    name: Assemble and publish release
     needs:
       - version
       - build
-    if: ${{ needs.version.outputs.publish == 'true' }}
+    if: ${{ needs.version.outputs.build == 'true' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
     env:
       EXPECTED_VERSION: ${{ needs.version.outputs.version }}
+      PUBLISH: ${{ needs.version.outputs.publish }}
+      RELEASE_TAG: v${{ needs.version.outputs.version }}
+      REPOSITORY: ${{ github.repository }}
+      RELEASE_SHA: ${{ github.sha }}
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          fetch-depth: 0
           persist-credentials: false
 
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -175,6 +183,7 @@ jobs:
           path: dist
           merge-multiple: true
 
+      # Runs in dry-run mode too, so the assembly is proven without publishing.
       - name: Write checksums
         shell: bash
         working-directory: dist
@@ -191,25 +200,122 @@ jobs:
           bash scripts/install-deburr.sh "$EXPECTED_VERSION" x86_64-unknown-linux-gnu "$PWD/dist" "$RUNNER_TEMP/install-check"
           test "$("$RUNNER_TEMP/install-check/deburr" --version)" = "deburr $EXPECTED_VERSION"
 
-      - id: release
-        uses: kellen-miller/ci/.github/actions/release@4f4e514ee184fbd03b393a6d0e4bccb5eea63a9a # main
-        with:
-          token: ${{ github.token }}
-
-      - name: Upload release assets
-        if: ${{ steps.release.outputs.release_published == 'true' }}
-        env:
-          RELEASE_VERSION: ${{ steps.release.outputs.version }}
-          RELEASE_TAG: ${{ steps.release.outputs.git_tag }}
-          REPOSITORY: ${{ github.repository }}
+      # Nothing below is public until the final publish step: a draft release
+      # has no tag (GitHub creates it when the draft is published) and is not
+      # visible to anyone without write access.
+      - name: Refuse to overwrite an existing release or tag
+        if: ${{ env.PUBLISH == 'true' }}
         shell: bash
         run: |
           set -euo pipefail
-          if [[ "$RELEASE_VERSION" == "$EXPECTED_VERSION" ]] && gh release upload "$RELEASE_TAG" dist/* --repo "$REPOSITORY"; then
-            exit 0
+          if gh api "repos/$REPOSITORY/git/ref/tags/$RELEASE_TAG" >/dev/null 2>&1; then
+            printf 'tag %s already exists; delete it (and any release for it) before re-running\n' "$RELEASE_TAG" >&2
+            exit 1
           fi
 
-          printf 'upload failed for %s; deleting the release and tag\n' "$RELEASE_TAG" >&2
-          gh release delete "$RELEASE_TAG" --repo "$REPOSITORY" --cleanup-tag --yes \
-            || gh api --method DELETE "repos/$REPOSITORY/git/refs/tags/$RELEASE_TAG"
-          exit 1
+          # A leftover draft from an interrupted run is safe to discard.
+          gh release list --repo "$REPOSITORY" --limit 200 --json tagName,isDraft \
+            --jq ".[] | select(.tagName == \"$RELEASE_TAG\") | .isDraft" > "$RUNNER_TEMP/existing-release.txt"
+          if grep -qx false "$RUNNER_TEMP/existing-release.txt"; then
+            printf 'a published release for %s already exists\n' "$RELEASE_TAG" >&2
+            exit 1
+          fi
+
+          if grep -qx true "$RUNNER_TEMP/existing-release.txt"; then
+            printf 'deleting a leftover draft for %s\n' "$RELEASE_TAG"
+            gh release delete "$RELEASE_TAG" --repo "$REPOSITORY" --yes
+          fi
+
+      - name: Create draft release
+        id: draft
+        if: ${{ env.PUBLISH == 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release create "$RELEASE_TAG" --repo "$REPOSITORY" \
+            --draft --target "$RELEASE_SHA" --title "$RELEASE_TAG" --generate-notes
+
+      - name: Upload assets to the draft
+        id: upload
+        if: ${{ env.PUBLISH == 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release upload "$RELEASE_TAG" dist/* --repo "$REPOSITORY"
+
+      - name: Verify the draft's assets
+        id: verify
+        if: ${{ env.PUBLISH == 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir "$RUNNER_TEMP/draft-assets"
+          gh release download "$RELEASE_TAG" --repo "$REPOSITORY" --dir "$RUNNER_TEMP/draft-assets"
+
+          # The draft must hold exactly the files that were checksummed, unchanged.
+          diff <(cd dist && ls) <(cd "$RUNNER_TEMP/draft-assets" && ls)
+          (cd "$RUNNER_TEMP/draft-assets" && sha256sum --check --strict SHA256SUMS)
+          for name in dist/*; do
+            cmp "$name" "$RUNNER_TEMP/draft-assets/${name##*/}"
+          done
+
+          bash scripts/install-deburr.sh "$EXPECTED_VERSION" x86_64-unknown-linux-gnu \
+            "$RUNNER_TEMP/draft-assets" "$RUNNER_TEMP/draft-install"
+          test "$("$RUNNER_TEMP/draft-install/deburr" --version)" = "deburr $EXPECTED_VERSION"
+
+      - name: Publish the release
+        id: publish
+        if: ${{ env.PUBLISH == 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release edit "$RELEASE_TAG" --repo "$REPOSITORY" --draft=false
+
+      # Any failure or cancellation before the publish step leaves nothing
+      # public: remove the draft so a re-run starts clean. The draft has no
+      # tag, so there is no tag to delete.
+      - name: Delete the draft after a failure
+        if: ${{ (failure() || cancelled()) && steps.draft.outcome != 'skipped' && steps.publish.outcome != 'success' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # If the publish call itself failed, the release may or may not be
+          # public; only a release that is still a draft is deleted.
+          gh release list --repo "$REPOSITORY" --limit 200 --json tagName,isDraft \
+            --jq ".[] | select(.tagName == \"$RELEASE_TAG\") | .isDraft" > "$RUNNER_TEMP/final-state.txt"
+          if grep -qx true "$RUNNER_TEMP/final-state.txt"; then
+            printf 'release %s was not published; deleting the draft\n' "$RELEASE_TAG"
+            gh release delete "$RELEASE_TAG" --repo "$REPOSITORY" --yes
+          elif grep -qx false "$RUNNER_TEMP/final-state.txt"; then
+            printf '::error::release %s is already public although the job failed; check it by hand\n' "$RELEASE_TAG"
+          fi
+
+      # The assets are now public. Prove the real download path works; if it
+      # does not, take the release down again.
+      - name: Install from the published release
+        id: published-install
+        if: ${{ env.PUBLISH == 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          url="https://github.com/$REPOSITORY/releases/download/$RELEASE_TAG"
+          ok=false
+          # The download CDN can lag the publish by a few seconds.
+          for attempt in 1 2 3 4 5; do
+            if bash scripts/install-deburr.sh "$EXPECTED_VERSION" x86_64-unknown-linux-gnu \
+              "$url" "$RUNNER_TEMP/published-install" \
+              && test "$("$RUNNER_TEMP/published-install/deburr" --version)" = "deburr $EXPECTED_VERSION"; then
+              ok=true
+              break
+            fi
+            printf 'install attempt %s failed; retrying\n' "$attempt" >&2
+            sleep 10
+          done
+
+          if [[ "$ok" != true ]]; then
+            printf '::error::release %s failed the post-publish install check; re-drafting it\n' "$RELEASE_TAG"
+            gh release edit "$RELEASE_TAG" --repo "$REPOSITORY" --draft=true
+            printf '::error::%s is back to a draft. The tag %s still points at %s: delete the draft and the tag, then re-run this workflow.\n' \
+              "$RELEASE_TAG" "$RELEASE_TAG" "$RELEASE_SHA"
+            exit 1
+          fi
