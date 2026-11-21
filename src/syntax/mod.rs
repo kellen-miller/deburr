@@ -449,16 +449,20 @@ fn collect_tokens(rules: &TokenRules, root: Node<'_>, source: &[u8]) -> (Vec<Tok
     let mut tokens: Vec<Token> = Vec::new();
     let mut semicolons: Vec<Token> = Vec::new();
     let mut cursor = root.walk();
+    // Kinds of the current node's ancestors, innermost last. `Node::parent`
+    // re-walks from the root, which is quadratic on wide files such as
+    // generated protobuf code, so the walk keeps its own ancestry.
+    let mut ancestors: Vec<&str> = Vec::new();
     let mut exiting = false;
 
     loop {
         let node = cursor.node();
+        let in_container = ancestors
+            .last()
+            .is_some_and(|parent| rules.statement_containers.contains(parent));
 
         if !exiting {
             let kind = node.kind();
-            let in_container = node
-                .parent()
-                .is_some_and(|parent| rules.statement_containers.contains(&parent.kind()));
 
             let atomic = rules.atomic.contains(&kind)
                 && !(0..node.child_count()).any(|index| {
@@ -487,7 +491,9 @@ fn collect_tokens(rules: &TokenRules, root: Node<'_>, source: &[u8]) -> (Vec<Tok
                 }
 
                 exiting = true;
-            } else if !cursor.goto_first_child() {
+            } else if cursor.goto_first_child() {
+                ancestors.push(kind);
+            } else {
                 exiting = true;
             }
 
@@ -497,9 +503,7 @@ fn collect_tokens(rules: &TokenRules, root: Node<'_>, source: &[u8]) -> (Vec<Tok
         let terminated = node.is_named()
             && !rules.comments.contains(&node.kind())
             && node.end_byte() > node.start_byte()
-            && node
-                .parent()
-                .is_some_and(|parent| rules.statement_containers.contains(&parent.kind()));
+            && in_container;
 
         if terminated {
             if tokens.last().is_some_and(|last| {
@@ -521,7 +525,9 @@ fn collect_tokens(rules: &TokenRules, root: Node<'_>, source: &[u8]) -> (Vec<Tok
 
         if cursor.goto_next_sibling() {
             exiting = false;
-        } else if !cursor.goto_parent() {
+        } else if cursor.goto_parent() {
+            ancestors.pop();
+        } else {
             return (tokens, semicolons);
         }
     }
