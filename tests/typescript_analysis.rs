@@ -712,6 +712,82 @@ fn a_statement_break_changes_the_fingerprint_a_semicolon_does_not() {
 }
 
 #[test]
+fn a_statement_break_inside_a_switch_case_changes_the_fingerprint() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let files = [
+        (
+            "case-split.ts",
+            "export function f(x: number, g: () => number) {\n  switch (x) {\n    case 0:\n      return\n      g()\n  }\n}\n",
+        ),
+        (
+            "case-joined.ts",
+            "export function f(x: number, g: () => number) {\n  switch (x) {\n    case 0:\n      return g()\n  }\n}\n",
+        ),
+        (
+            "default-split.ts",
+            "export function f(x: number, g: () => number) {\n  switch (x) {\n    default:\n      return\n      g()\n  }\n}\n",
+        ),
+        (
+            "default-joined.ts",
+            "export function f(x: number, g: () => number) {\n  switch (x) {\n    default:\n      return g()\n  }\n}\n",
+        ),
+        (
+            "case-explicit.ts",
+            "export function f(x: number, a: () => void, b: () => void) {\n  switch (x) {\n    case 0:\n      a();\n      b();\n  }\n}\n",
+        ),
+        (
+            "case-automatic.ts",
+            "export function f(x: number, a: () => void, b: () => void) {\n  switch (x) {\n    case 0:\n      a()\n      b()\n  }\n}\n",
+        ),
+    ];
+
+    for (path, source) in files {
+        write(dir.path(), path, source);
+    }
+
+    let report = audit_root(dir.path()).report;
+    let fingerprint = |path: &str| {
+        report
+            .functions
+            .iter()
+            .find(|function| function.path == path)
+            .map(|function| function.fingerprint.clone())
+            .unwrap_or_default()
+    };
+
+    assert_ne!(fingerprint("case-split.ts"), fingerprint("case-joined.ts"));
+    assert_ne!(
+        fingerprint("default-split.ts"),
+        fingerprint("default-joined.ts")
+    );
+    // An explicit `;` and a line break still end a case statement alike.
+    assert_eq!(
+        fingerprint("case-explicit.ts"),
+        fingerprint("case-automatic.ts")
+    );
+    assert!(!fingerprint("case-explicit.ts").is_empty());
+}
+
+#[test]
+fn branches_that_differ_only_by_a_break_inside_a_switch_case_are_not_duplicates() {
+    // `return` then `g()` is two statements; `return g()` is one.
+    assert!(
+        findings_of(
+            "function f(x: boolean, y: number, g: () => number) {\n  if (x) {\n    switch (y) {\n      case 0:\n        return\n        g()\n    }\n  } else {\n    switch (y) {\n      case 0:\n        return g()\n    }\n  }\n}\n"
+        )
+        .is_empty()
+    );
+
+    // The same branches with matching breaks are duplicates.
+    assert_eq!(
+        findings_of(
+            "function f(x: boolean, y: number, g: () => number) {\n  if (x) {\n    switch (y) {\n      case 0:\n        return\n        g()\n    }\n  } else {\n    switch (y) {\n      case 0:\n        return\n        g()\n    }\n  }\n}\n"
+        ),
+        [(DUPLICATE.to_owned(), 2)]
+    );
+}
+
+#[test]
 fn functions_inside_template_substitutions_are_measured() {
     let dir = tempfile::tempdir().expect("temp dir");
 

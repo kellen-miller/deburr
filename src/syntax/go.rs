@@ -3,7 +3,7 @@
 //! children of their switch, and an `else if` is an `if_statement` in the
 //! previous one's `alternative`.
 
-use tree_sitter::Node;
+use tree_sitter::{Node, Point};
 
 use super::{
     BranchShape, CallTarget, FindingRules, LanguageRules, SignalRules, StatementRules, TokenRules,
@@ -14,6 +14,7 @@ use super::{
 pub static RULES: LanguageRules = LanguageRules {
     tokens: TokenRules {
         statement_containers: &["statement_list"],
+        expression_fields: &[],
         atomic: &[
             "interpreted_string_literal",
             "raw_string_literal",
@@ -88,6 +89,7 @@ pub static RULES: LanguageRules = LanguageRules {
         redundant_boolean_message: "boolean branches return opposite literals; review replacing them with the condition or its negation",
         duplicate_branches_message: "if branches have identical syntax; review whether the condition and branch effects can be simplified",
     },
+    structure_problem: Some(structure_problem),
 };
 
 /// The name and selector receiver of a call.
@@ -220,4 +222,147 @@ fn package_name(root: Node<'_>, source: &[u8]) -> String {
 
 fn text(node: Node<'_>, source: &[u8]) -> String {
     String::from_utf8_lossy(&source[node.byte_range()]).into_owned()
+}
+
+/// What `go/parser` rejects and tree-sitter-go accepts: top-level statements,
+/// a missing package clause, and invalid string or rune literals. Returns the
+/// earliest offending position.
+fn structure_problem(root: Node<'_>, source: &[u8]) -> Option<Point> {
+    match (top_level_problem(root), literal_problem(root, source)) {
+        (Some(top), Some(literal)) => Some(top.min(literal)),
+        (top, literal) => top.or(literal),
+    }
+}
+
+/// The first top-level node that is not a declaration, or the start of the
+/// file when it has no package clause.
+fn top_level_problem(root: Node<'_>) -> Option<Point> {
+    let mut cursor = root.walk();
+    let mut seen_first = false;
+
+    for child in root.named_children(&mut cursor) {
+        if child.kind() == "comment" {
+            continue;
+        }
+
+        let allowed = if seen_first {
+            matches!(
+                child.kind(),
+                "package_clause"
+                    | "import_declaration"
+                    | "function_declaration"
+                    | "method_declaration"
+                    | "type_declaration"
+                    | "var_declaration"
+                    | "const_declaration"
+            )
+        } else {
+            child.kind() == "package_clause"
+        };
+
+        if !allowed {
+            return Some(child.start_position());
+        }
+
+        seen_first = true;
+    }
+
+    if seen_first {
+        None
+    } else {
+        Some(Point { row: 0, column: 0 })
+    }
+}
+
+/// The start of the first interpreted string or rune literal whose escapes
+/// or length `go/parser` rejects, in source order.
+fn literal_problem(root: Node<'_>, source: &[u8]) -> Option<Point> {
+    let mut cursor = root.walk();
+
+    loop {
+        let node = cursor.node();
+        let quote = match node.kind() {
+            "interpreted_string_literal" => Some('"'),
+            "rune_literal" => Some('\''),
+            _ => None,
+        };
+
+        if let Some(quote) = quote {
+            let invalid = source
+                .get(node.start_byte() + 1..node.end_byte().saturating_sub(1))
+                .is_none_or(|body| invalid_literal_body(body, quote));
+
+            if invalid {
+                return Some(node.start_position());
+            }
+        } else if cursor.goto_first_child() {
+            continue;
+        }
+
+        while !cursor.goto_next_sibling() {
+            if !cursor.goto_parent() {
+                return None;
+            }
+        }
+    }
+}
+
+/// Whether the text between a literal's quotes is invalid. A rune literal
+/// must also hold exactly one character or escape.
+fn invalid_literal_body(body: &[u8], quote: char) -> bool {
+    let Ok(mut rest) = std::str::from_utf8(body) else {
+        return true;
+    };
+    let mut units = 0_usize;
+
+    while let Some(next) = rest.chars().next() {
+        units += 1;
+
+        if next == '\\' {
+            let Some(length) = escape_length(&rest[1..], quote) else {
+                return true;
+            };
+
+            rest = &rest[1 + length..];
+        } else if next == '\n' {
+            // A raw newline ends a rune literal early; strings cannot hold one.
+            return true;
+        } else {
+            rest = &rest[next.len_utf8()..];
+        }
+    }
+
+    quote == '\'' && units != 1
+}
+
+/// The byte length of the valid escape that follows a backslash, or `None`
+/// when `go/parser` rejects it. `\'` is valid only in runes and `\"` only in
+/// strings; octal escapes need three digits and at most `\377`; `\u` and `\U`
+/// must name a Unicode scalar value (no surrogates, nothing above U+10FFFF).
+fn escape_length(escape: &str, quote: char) -> Option<usize> {
+    let first = escape.chars().next()?;
+    let (prefix, digit_count, radix) = match first {
+        'a' | 'b' | 'f' | 'n' | 'r' | 't' | 'v' | '\\' => return Some(1),
+        '\'' | '"' => return (first == quote).then_some(1),
+        '0'..='7' => (0, 3, 8),
+        'x' => (1, 2, 16),
+        'u' => (1, 4, 16),
+        'U' => (1, 8, 16),
+        _ => return None,
+    };
+
+    let digits = escape.get(prefix..prefix + digit_count)?;
+
+    if !digits.chars().all(|digit| digit.is_digit(radix)) {
+        return None;
+    }
+
+    let value = u32::from_str_radix(digits, radix).ok()?;
+    let valid = match first {
+        '0'..='7' => value <= 0o377,
+        'u' | 'U' => char::from_u32(value).is_some(),
+        _ => true,
+    };
+
+    valid.then_some(prefix + digit_count)
 }

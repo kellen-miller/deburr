@@ -22,7 +22,16 @@ pub static RULES: LanguageRules = LanguageRules {
         // The grammar keeps a statement's `;` inside the statement, so an
         // explicit and an automatic semicolon read alike once the terminator
         // replaces it.
-        statement_containers: &["program", "statement_block"],
+        // `case` and `default` bodies are statement lists with no block of
+        // their own, so `case 0: return` followed by a newline and `g()` is
+        // two statements; the case's `value` is an expression, not one.
+        statement_containers: &[
+            "program",
+            "statement_block",
+            "switch_case",
+            "switch_default",
+        ],
+        expression_fields: &["value"],
         atomic: &["string", "template_string", "regex"],
         code_children: &["template_substitution"],
         comments: &["comment", "html_comment"],
@@ -80,6 +89,7 @@ pub static RULES: LanguageRules = LanguageRules {
         redundant_boolean_message: "boolean branches return opposite literals; review replacing them with the condition or its negation",
         duplicate_branches_message: "conditional branches contain identical syntax; review consolidating them",
     },
+    structure_problem: None,
 };
 
 /// Every TypeScript function ID is `typescript/<path>::<name>`.

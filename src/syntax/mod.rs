@@ -45,7 +45,14 @@ pub struct LanguageRules {
     /// Structural signals beyond nesting; `None` when the language has none.
     pub signals: Option<SignalRules>,
     pub findings: FindingRules,
+    /// The language's own validity check, for what tree-sitter accepts but
+    /// the language's reference parser rejects. Returns the start of the
+    /// first offending node. Runs only when the tree has no error nodes.
+    pub structure_problem: Option<StructureCheck>,
 }
+
+/// Finds the start of the first node a language's reference parser rejects.
+pub type StructureCheck = fn(Node<'_>, &[u8]) -> Option<Point>;
 
 /// How a parse tree becomes the code tokens that every fingerprint, equality
 /// check, and line count is computed from.
@@ -54,6 +61,10 @@ pub struct TokenRules {
     /// Nodes whose named children are statements that each get a synthetic
     /// terminator token.
     pub statement_containers: &'static [&'static str],
+    /// Fields of a statement container that hold an expression, not a
+    /// statement (the `value` of a TypeScript `case`), so they get no
+    /// terminator.
+    pub expression_fields: &'static [&'static str],
     /// Nodes that tree-sitter splits into children but that read as one token.
     pub atomic: &'static [&'static str],
     /// Children that hold code. An atomic node with one of these as a direct
@@ -306,8 +317,8 @@ impl SyntaxError {
 ///
 /// Returns [`SyntaxError::Invalid`] when the tree contains error or missing
 /// nodes, or fails the language's structural validity check (Go: the first
-/// non-comment top-level node must be the package clause and every top-level
-/// node must be a declaration). Returns [`SyntaxError::Unavailable`] when
+/// non-comment top-level node must be the package clause, every top-level
+/// node must be a declaration, and string and rune literals must be valid). Returns [`SyntaxError::Unavailable`] when
 /// tree-sitter itself fails.
 pub fn parse(language: Language, source: Vec<u8>) -> Result<Syntax, SyntaxError> {
     let mut parser = Parser::new();
@@ -328,11 +339,12 @@ pub fn parse(language: Language, source: Vec<u8>) -> Result<Syntax, SyntaxError>
 
     let root = tree.root_node();
 
-    let mut problem = first_error(root);
-
-    if problem.is_none() && language == Language::Go {
-        problem = go_structure_problem(root);
-    }
+    let problem = first_error(root).or_else(|| {
+        language
+            .rules()
+            .structure_problem
+            .and_then(|check| check(root, &source))
+    });
 
     let (tokens, semicolons) = collect_tokens(&language.rules().tokens, root, &source);
     let syntax = Syntax {
@@ -400,46 +412,6 @@ fn stray_token_position(root: Node<'_>) -> Point {
     stray.map_or_else(|| root.start_position(), |child| child.start_position())
 }
 
-/// tree-sitter-go accepts top-level statements and files without a package
-/// clause; `go/parser` rejects both, so deburr does too.
-fn go_structure_problem(root: Node<'_>) -> Option<Point> {
-    let mut cursor = root.walk();
-    let mut seen_first = false;
-
-    for child in root.named_children(&mut cursor) {
-        if child.kind() == "comment" {
-            continue;
-        }
-
-        let allowed = if seen_first {
-            matches!(
-                child.kind(),
-                "package_clause"
-                    | "import_declaration"
-                    | "function_declaration"
-                    | "method_declaration"
-                    | "type_declaration"
-                    | "var_declaration"
-                    | "const_declaration"
-            )
-        } else {
-            child.kind() == "package_clause"
-        };
-
-        if !allowed {
-            return Some(child.start_position());
-        }
-
-        seen_first = true;
-    }
-
-    if seen_first {
-        None
-    } else {
-        Some(Point { row: 0, column: 0 })
-    }
-}
-
 /// Collects code tokens in source order: non-comment leaves, string-like
 /// nodes as single tokens, and a synthetic `;` after each named child of a
 /// statement container. An explicit `;` that ends a statement is replaced by
@@ -503,7 +475,10 @@ fn collect_tokens(rules: &TokenRules, root: Node<'_>, source: &[u8]) -> (Vec<Tok
         let terminated = node.is_named()
             && !rules.comments.contains(&node.kind())
             && node.end_byte() > node.start_byte()
-            && in_container;
+            && in_container
+            && !cursor
+                .field_name()
+                .is_some_and(|field| rules.expression_fields.contains(&field));
 
         if terminated {
             if tokens.last().is_some_and(|last| {
