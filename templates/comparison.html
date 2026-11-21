@@ -3,63 +3,57 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Deburr comparison</title>
-<style>
-body { font: 15px system-ui, sans-serif; margin: 2rem; color: #202124; }
-table { border-collapse: collapse; margin: 1rem 0 2rem; width: 100%; }
-th, td { border: 1px solid #dadce0; padding: .4rem .6rem; text-align: left; vertical-align: top; }
-th { background: #f1f3f4; }
-code { white-space: pre-wrap; overflow-wrap: anywhere; }
-.bad { color: #b00020; }
-</style>
+<title>deburr comparison · {{ name }}</title>
+<style>{{ css|safe }}</style>
 </head>
 <body>
-<h1>Deburr comparison</h1>
-<p>Schema <code>{{ comparison.schema_version }}</code>; compatible <code>{{ comparison.compatible }}</code>; complete <code>{{ comparison.complete }}</code>{% if !comparison.reason.is_empty() %}; reason <code>{{ comparison.reason }}</code>{% endif %}.</p>
-<p>Analyzers <code>{{ before_analyzer }}</code> to <code>{{ after_analyzer }}</code>.</p>
-<p>Before provenance <code>{{ before_provenance }}</code>.</p>
-<p>After provenance <code>{{ after_provenance }}</code>.</p>
-{% if !comparison.compatible %}<p class="bad">Change conclusion unavailable; no finding, function, or clone improvement claim was made.</p>{% else if !comparison.complete %}<p class="bad">Change conclusion incomplete; no finding, function, or clone improvement claim was made.</p>{% endif %}
-<h2>Coverage</h2>
-<table><tr><th></th><th>Analyzed</th><th>Read errors</th><th>Parse errors</th><th>Unsupported</th><th>Excluded</th></tr>
-<tr><th>Before</th><td>{{ comparison.before_coverage.analyzed }}</td><td>{{ comparison.before_coverage.read_errors }}</td><td>{{ comparison.before_coverage.parse_errors }}</td><td>{{ comparison.before_coverage.unsupported }}</td><td>{{ comparison.before_coverage.excluded }}</td></tr>
-<tr><th>After</th><td>{{ comparison.after_coverage.analyzed }}</td><td>{{ comparison.after_coverage.read_errors }}</td><td>{{ comparison.after_coverage.parse_errors }}</td><td>{{ comparison.after_coverage.unsupported }}</td><td>{{ comparison.after_coverage.excluded }}</td></tr></table>
-<h2>Raw metrics</h2>
-<table><tr><th>Bucket</th><th>Code lines</th><th>Functions</th><th>Cyclomatic</th><th>Max nesting</th><th>Mass</th><th>High complexity functions</th><th>High complexity mass</th><th>High complexity mass share</th></tr>
-{% for metric in metrics %}<tr><th>{{ metric.label }}</th><td>{{ metric.code_lines }}</td><td>{{ metric.functions }}</td><td>{{ metric.cyclomatic }}</td><td>{{ metric.max_nesting }}</td><td>{{ metric.mass }}</td><td>{{ metric.high_complexity_functions }}</td><td>{{ metric.high_complexity_mass }}</td><td>{{ metric.share }}</td></tr>
-{% endfor %}{% if !has_delta %}<tr><th colspan="9" class="bad">Metrics delta unavailable.</th></tr>
-{% endif %}</table>
-<h2>New findings ({{ new_findings.len() }})</h2>
-<table><tr><th>Location</th><th>Rule</th><th>Severity</th><th>Message</th><th>ID</th><th>Identity</th></tr>
-{% for finding in new_findings %}<tr><td><code>{{ finding.location }}</code></td><td>{{ finding.rule }}</td><td>{{ finding.severity }}</td><td>{{ finding.message }}</td><td><code>{{ finding.id }}</code></td><td>{{ finding.ambiguous }}</td></tr>{% else %}<tr><td colspan="6">No new findings.</td></tr>{% endfor %}
-</table>
-<h2>No longer reported findings ({{ resolved_findings.len() }})</h2>
-<table><tr><th>Location</th><th>Rule</th><th>Severity</th><th>Message</th><th>ID</th><th>Identity</th></tr>
-{% for finding in resolved_findings %}<tr><td><code>{{ finding.location }}</code></td><td>{{ finding.rule }}</td><td>{{ finding.severity }}</td><td>{{ finding.message }}</td><td><code>{{ finding.id }}</code></td><td>{{ finding.ambiguous }}</td></tr>{% else %}<tr><td colspan="6">No findings are no longer reported.</td></tr>{% endfor %}
-</table>
-<h2>Review ledger</h2>
-<p>Before: total={{ comparison.before_review.counts.total }}, unreviewed={{ comparison.before_review.counts.unreviewed }}, refactored={{ comparison.before_review.counts.refactored }}, retained={{ comparison.before_review.counts.retained }}, deferred={{ comparison.before_review.counts.deferred }}, stale={{ comparison.before_review.counts.stale }}.</p>
-<p>After: total={{ comparison.after_review.counts.total }}, unreviewed={{ comparison.after_review.counts.unreviewed }}, refactored={{ comparison.after_review.counts.refactored }}, retained={{ comparison.after_review.counts.retained }}, deferred={{ comparison.after_review.counts.deferred }}, stale={{ comparison.after_review.counts.stale }}.</p>
-<h2>Finding changes ({{ finding_changes.len() }})</h2>
-<table><tr><th>State</th><th>Match</th><th>Before</th><th>After</th><th>Review</th></tr>
-{% for change in finding_changes %}<tr><td>{{ change.state }}{% if change.note %}<br><small>no behavior conclusion</small>{% endif %}</td><td>{{ change.basis }}<br><code>{{ change.before_ids }}</code><code>{{ change.after_ids }}</code></td><td><code>{{ change.before }}</code></td><td><code>{{ change.after }}</code></td><td>{{ change.review }}</td></tr>{% else %}<tr><td colspan="5">No finding changes.</td></tr>{% endfor %}
-</table>
-<h2>Function changes ({{ function_changes.len() }})</h2>
-<table><tr><th>State</th><th>Match</th><th>Before measurements and location</th><th>After measurements and location</th><th>Review</th></tr>
-{% for change in function_changes %}<tr><td>{{ change.state }}{% if change.note %}<br><small>no behavior conclusion</small>{% endif %}</td><td>{{ change.basis }}<br><code>{{ change.before_ids }}</code><code>{{ change.after_ids }}</code></td><td><code>{{ change.before }}</code></td><td><code>{{ change.after }}</code></td><td>{{ change.review }}</td></tr>{% else %}<tr><td colspan="5">No function changes.</td></tr>{% endfor %}
-</table>
-<h2>Clone changes ({{ clone_changes.len() }})</h2>
-<table><tr><th>State</th><th>Match</th><th>Before family, measurements, and endpoints</th><th>After family, measurements, and endpoints</th><th>Review</th></tr>
-{% for change in clone_changes %}<tr><td>{{ change.state }}</td><td>{{ change.basis }}<br><code>{{ change.before_ids }}</code><code>{{ change.after_ids }}</code></td><td><code>{{ change.before }}</code></td><td><code>{{ change.after }}</code></td><td>{{ change.review }}</td></tr>{% else %}<tr><td colspan="5">No clone changes.</td></tr>{% endfor %}
-</table>
-{% if !ambiguous.is_empty() %}<h2>Ambiguous matches ({{ ambiguous.len() }})</h2>
-<table><tr><th>Kind</th><th>Path</th><th>Rule</th><th>Message</th><th>Before IDs</th><th>After IDs</th></tr>
-{% for match_row in ambiguous %}<tr><td>{{ match_row.kind }}</td><td><code>{{ match_row.path }}</code></td><td>{{ match_row.rule }}</td><td>{{ match_row.message }}</td><td><code>{{ match_row.before_ids }}</code></td><td><code>{{ match_row.after_ids }}</code></td></tr>
-{% endfor %}</table>
-{% endif %}<h2>Duplication</h2>
-<p>Before <code>{{ duplication_before_status }}</code>; after <code>{{ duplication_after_status }}</code>; comparable <code>{{ comparison.duplication.comparable }}</code>{% if !comparison.duplication.reason.is_empty() %}; reason <code>{{ comparison.duplication.reason }}</code>{% endif %}.</p>
-<p>Before settings: requested <code>{{ comparison.duplication.before_config.requested }}</code>, min tokens <code>{{ comparison.duplication.before_config.min_tokens }}</code>, min lines <code>{{ comparison.duplication.before_config.min_lines }}</code>. After settings: requested <code>{{ comparison.duplication.after_config.requested }}</code>, min tokens <code>{{ comparison.duplication.after_config.min_tokens }}</code>, min lines <code>{{ comparison.duplication.after_config.min_lines }}</code>.</p>
-{% if !before_clones.is_empty() %}<h3>Before clones</h3><ul>{% for clone in before_clones %}<li><code>{{ clone }}</code></li>{% endfor %}</ul>{% endif %}
-{% if !after_clones.is_empty() %}<h3>After clones</h3><ul>{% for clone in after_clones %}<li><code>{{ clone }}</code></li>{% endfor %}</ul>{% endif %}
+<div class="wrap">
+<header class="rhead">
+  <h1>{{ name }}</h1>
+  <div class="meta"><span class="num">{{ before_commit }} → {{ after_commit }}</span></div>
+</header>
+
+<div class="verdict">
+  <div class="tile"><div class="k"><span class="dot {{ tone }}"></span><span class="eyebrow">This comparison</span></div><div class="big num">{{ verdict }}</div></div>
+</div>
+
+{% if !conclusive %}<div class="hint err"><span class="dot bad"></span><div>The two reports cannot support a conclusion, so nothing is listed as better or worse.</div></div>{% endif %}
+
+{% if conclusive %}
+<section>
+  <div class="sec-head"><h2>Got worse ({{ worse.len() }})</h2><p>New or growing problems. Source is from the newer tree.</p></div>
+  {% if worse.is_empty() %}<p class="muted">Nothing got worse.</p>{% else %}<ul class="changes">{% for entry in worse %}
+    <li class="change">
+      <div class="item-top"><span class="chip {{ entry.tone }}">{{ entry.label }}</span><h3>{{ entry.title }}</h3></div>
+      <div class="delta"><span>{{ entry.before }}</span><span class="arrow">→</span><b>{{ entry.after }}</b>{% if let Some(place) = entry.place %}<span class="loc">{% if let Some(href) = place.href %}<a href="{{ href }}">{{ place.text }}</a>{% else %}{{ place.text }}{% endif %}</span>{% endif %}</div>
+      {% if let Some(block) = entry.block %}<details class="code"><summary>Show code</summary><div class="pair one"><div><div class="cap">{{ block.caption }}</div><pre class="src">{% for line in block.lines %}<span class="l" data-n="{{ line.number }}">{{ line.text }}</span>{% endfor %}</pre>{% if let Some(clipped) = block.clipped %}<p class="note">{{ clipped }}</p>{% endif %}</div></div></details>{% endif %}
+    </li>{% endfor %}
+  </ul>{% endif %}
+</section>
+
+<section>
+  <div class="sec-head"><h2>Improved ({{ better.len() }})</h2><p>Problems that went away or shrank.</p></div>
+  {% if better.is_empty() %}<p class="muted">Nothing improved.</p>{% else %}<ul class="changes">{% for entry in better %}
+    <li class="change">
+      <div class="item-top"><span class="chip {{ entry.tone }}">{{ entry.label }}</span><h3>{{ entry.title }}</h3></div>
+      <div class="delta"><span>{{ entry.before }}</span><span class="arrow">→</span><b>{{ entry.after }}</b>{% if let Some(place) = entry.place %}<span class="loc">{% if let Some(href) = place.href %}<a href="{{ href }}">{{ place.text }}</a>{% else %}{{ place.text }}{% endif %}</span>{% endif %}</div>
+      {% if let Some(block) = entry.block %}<details class="code"><summary>Show code</summary><div class="pair one"><div><div class="cap">{{ block.caption }}</div><pre class="src">{% for line in block.lines %}<span class="l" data-n="{{ line.number }}">{{ line.text }}</span>{% endfor %}</pre>{% if let Some(clipped) = block.clipped %}<p class="note">{{ clipped }}</p>{% endif %}</div></div></details>{% endif %}
+    </li>{% endfor %}
+  </ul>{% endif %}
+  {% if source_capped %}<p class="note">Source shown for the first {{ source_cap }} entries.</p>{% endif %}
+</section>
+{% endif %}
+
+{% if unmatched > 0 %}<p class="muted">{{ unmatched_sentence }}</p>{% endif %}
+
+<details class="audit">
+  <summary>Audit details</summary>
+  <div class="audit-grid">{% for side in sides %}
+    <div><h4>{{ side.title }}</h4><dl class="kv">{% for row in side.rows %}<dt>{{ row.key }}</dt><dd>{{ row.value }}</dd>{% endfor %}</dl></div>{% endfor %}
+    <div><h4>Machine-readable comparison</h4><p>The full JSON comparison is embedded in this page for tools and LLMs. It matches <code>--format json</code>.</p><p><code>JSON.parse(document.getElementById("deburr-comparison").textContent)</code></p></div>
+  </div>
+</details>
+</div>
+<script type="application/json" id="deburr-comparison">{{ json|safe }}</script>
 </body>
 </html>

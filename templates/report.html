@@ -3,95 +3,116 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Deburr report</title>
-<style>
-body { font: 15px system-ui, sans-serif; margin: 2rem; color: #202124; }
-table { border-collapse: collapse; margin: 1rem 0 2rem; width: 100%; }
-th, td { border: 1px solid #dadce0; padding: .4rem .6rem; text-align: left; vertical-align: top; }
-th { background: #f1f3f4; }
-code { white-space: pre-wrap; overflow-wrap: anywhere; }
-.error { color: #b00020; }
-.filters { display: flex; flex-wrap: wrap; gap: .75rem; align-items: end; }
-.filters label { display: flex; flex-direction: column; gap: .2rem; }
-.filters input, .filters select { min-width: 10rem; padding: .35rem; }
-[hidden] { display: none; }
-</style>
+<title>deburr report · {{ name }}</title>
+<style>{{ css|safe }}</style>
 </head>
 <body>
-<h1>Deburr report</h1>
-<p>Schema <code>{{ report.schema_version }}</code>; analyzer <code>{{ analyzer }}</code>; language <code>{{ report.config.language }}</code>.</p>
-<p>Scope <code>{{ scope }}</code>.</p>
-<p>Provenance <code>{{ provenance }}</code>.</p>
-<h2>Coverage</h2>
-<table><tr><th>Discovered</th><th>Analyzed</th><th>Excluded</th><th>Unsupported</th><th>Read errors</th><th>Parse errors</th><th>Symlinks</th><th>Excluded directories</th></tr>
-<tr><td>{{ report.coverage.discovered }}</td><td>{{ report.coverage.analyzed }}</td><td>{{ report.coverage.excluded }}</td><td>{{ report.coverage.unsupported }}</td><td>{{ report.coverage.read_errors }}</td><td>{{ report.coverage.parse_errors }}</td><td>{{ report.coverage.symlinks }}</td><td>{{ report.coverage.excluded_directories }}</td></tr></table>
-{% if report.coverage.analyzed == 0 %}<p class="error">No analyzable Go or TypeScript files were found.</p>{% endif %}
-<h2>Metrics</h2>
-<table><tr><th>Bucket</th><th>Code lines</th><th>Functions</th><th>Cyclomatic</th><th>Max nesting</th><th>Mass</th><th>High complexity functions</th><th>High complexity mass</th><th>High complexity mass share</th></tr>
-{% for metric in metrics %}<tr><td>{{ metric.label }}</td><td>{{ metric.code_lines }}</td><td>{{ metric.functions }}</td><td>{{ metric.cyclomatic }}</td><td>{{ metric.max_nesting }}</td><td>{{ metric.mass }}</td><td>{{ metric.high_complexity_functions }}</td><td>{{ metric.high_complexity_mass }}</td><td>{{ metric.share }}</td></tr>
-{% endfor %}</table>
-<h2>Review inventory</h2>
-<p>Function hotspots ({{ hotspot_count }} high-complexity of {{ function_count }} functions) are ranked by raw mass with stable ties. Function inventory ({{ function_count }}), native findings ({{ finding_count }}), and Duplication clones ({{ clone_count }}) are all included below.</p>
-<p>Primary review items: {{ review_counts.total }}. Review status: unreviewed={{ review_counts.unreviewed }}, refactored={{ review_counts.refactored }}, retained={{ review_counts.retained }}, deferred={{ review_counts.deferred }}, stale={{ review_counts.stale }}. Non-hotspot function rows are raw observed inventory. A missing row never proves a comparison item was resolved.</p>
-<div class="filters">
-<label>Search<input id="inventory-search" type="search" placeholder="ID, path, reason, or upstream"></label>
-<label>View<select id="inventory-view"><option value="review">review items</option><option value="">all inventory</option></select></label>
-<label>Kind<select id="inventory-kind"><option value="">all</option><option value="function">function</option><option value="finding">finding</option><option value="clone">clone</option></select></label>
-<label>Category<select id="inventory-category"><option value="">all</option>{% for option in category_options %}<option value="{{ option }}">{{ option }}</option>{% endfor %}</select></label>
-<label>Status<select id="inventory-status"><option value="">all</option>{% for option in status_options %}<option value="{{ option }}">{{ option }}</option>{% endfor %}</select></label>
+<div class="wrap">
+<header class="rhead">
+  <h1>{{ name }}</h1>
+  <div class="meta">{% for line in meta %}<span class="num">{{ line }}</span>{% endfor %}</div>
+</header>
+
+{% if nothing_analyzed %}<div class="hint err"><span class="dot bad"></span><div>No analyzable Go or TypeScript files were found, so there is nothing to report on.</div></div>{% endif %}
+
+<div class="verdict">{% for tile in tiles %}
+  <div class="tile"><div class="k"><span class="dot {{ tile.tone }}"></span><span class="eyebrow">{{ tile.label }}</span></div><div class="big num">{{ tile.headline }}</div>{% if !tile.detail.is_empty() %}<p class="num">{{ tile.detail }}</p>{% endif %}</div>{% endfor %}
 </div>
-<p>Showing <strong id="inventory-visible">{{ review_counts.total }}</strong> of {{ rows.len() }} inventory rows.</p>
-<table id="review-inventory"><thead><tr><th>Kind</th><th>Category</th><th>Status</th><th>Location</th><th>ID / subject</th><th>Metrics</th><th>Reason</th><th>Evidence</th><th>Upstream</th><th>Previous</th></tr></thead><tbody>
-{% for row in rows %}<tr data-review-row data-review="{{ row.review }}" data-kind="{{ row.kind }}" data-category="{{ row.category }}" data-status="{{ row.status }}" data-stale="{{ row.stale }}" data-search="{{ row.search }}"><td>{{ row.kind }}</td><td>{{ row.category }}</td><td>{{ row.status }}{% if row.stale %} (stale){% endif %}</td><td><code>{{ row.location }}</code></td><td><code>{{ row.id }}</code>{% if !row.fingerprint.is_empty() %}<br><code>fp: {{ row.fingerprint }}</code>{% endif %}<br>{{ row.subject }}</td><td><code>{{ row.metrics }}</code></td><td>{% if !row.reason_category.is_empty() %}<code>{{ row.reason_category }}</code>: {% endif %}{% if !row.reason.is_empty() %}{{ row.reason }}{% else %}&mdash;{% endif %}</td><td>{% if !row.evidence.is_empty() %}{{ row.evidence }}{% else %}&mdash;{% endif %}</td><td>{% if !row.upstream.is_empty() %}{{ row.upstream }}{% else %}&mdash;{% endif %}</td><td>{% if !row.previous.is_empty() %}{{ row.previous }}{% else %}&mdash;{% endif %}</td></tr>{% else %}<tr><td colspan="10">No inventory rows.</td></tr>{% endfor %}
-</tbody></table>
-<script>
-(function () {
-  const rows = Array.from(document.querySelectorAll("[data-review-row]"));
-  const search = document.getElementById("inventory-search");
-  const view = document.getElementById("inventory-view");
-  const kind = document.getElementById("inventory-kind");
-  const category = document.getElementById("inventory-category");
-  const status = document.getElementById("inventory-status");
-  const visible = document.getElementById("inventory-visible");
 
-  function update() {
-    const query = search.value.trim().toLowerCase();
-    const selectedView = view.value;
-    const selectedKind = kind.value;
-    const selectedCategory = category.value;
-    const selectedStatus = status.value;
-    let count = 0;
-    rows.forEach((row) => {
-      const matches = (!query || row.dataset.search.toLowerCase().includes(query)) &&
-        (!selectedView || row.dataset.review === "true") &&
-        (!selectedKind || row.dataset.kind === selectedKind) &&
-        (!selectedCategory || row.dataset.category === selectedCategory) &&
-        (!selectedStatus || row.dataset.status === selectedStatus);
-      row.hidden = !matches;
-      if (matches) {
-        count++;
-      }
-    });
-    visible.textContent = String(count);
-  }
+{% for hint in hints %}<div class="hint"><span class="dot cx"></span><div>{{ hint }}</div></div>
+{% endfor %}
 
-  [search, view, kind, category, status].forEach((control) => {
-    control.addEventListener("input", update);
-    control.addEventListener("change", update);
-  });
-  update();
-})();
-</script>
-<h2>Duplication</h2>
-<p>Status <code>{{ duplication_status }}</code>; min tokens <code>{{ report.duplication.min_tokens }}</code>; min lines <code>{{ report.duplication.min_lines }}</code>; {{ clone_count }} clones are included in the complete review inventory above{% if !report.duplication.error.is_empty() %}; error <span class="error">{{ report.duplication.error }}</span>{% endif %}.</p>
-{% for category in duplication_categories %}<p>{{ category.category }}: {{ category.percentage }}% duplication ({{ category.duplicated_code_lines }} of {{ category.code_lines }} code lines across {{ category.files }} files).</p>
-{% endfor %}{% if !clones.is_empty() %}<table><tr><th>Clone</th><th>Category</th><th>Tokens</th><th>Endpoint</th><th>Code lines</th><th>Functions</th></tr>
-{% for clone in clones %}{% for endpoint in clone.endpoints %}<tr>{% if loop.first %}<td rowspan="{{ clone.endpoints.len() }}"><code>{{ clone.id }}</code><br>family <code>{{ clone.family_id }}</code>{% if clone.ambiguous %}<br>identity ambiguous{% endif %}</td><td rowspan="{{ clone.endpoints.len() }}">{{ clone.category }}</td><td rowspan="{{ clone.endpoints.len() }}">{{ clone.tokens }}</td>{% endif %}<td><code>{{ endpoint.location }}</code></td><td>{{ endpoint.code_lines }}</td><td><code>{{ endpoint.functions }}</code></td></tr>
-{% endfor %}{% endfor %}</table>
-{% endif %}<details><summary>File inventory ({{ files.len() }})</summary>
-<table><tr><th>Path</th><th>Category</th><th>Status</th><th>Bytes</th><th>Lines</th><th>Code lines</th><th>Reason</th><th>Error</th></tr>
-{% for file in files %}<tr><td><code>{{ file.path }}</code></td><td>{{ file.category }}</td><td>{{ file.status }}</td><td>{{ file.bytes }}</td><td>{{ file.lines }}</td><td>{{ file.code_lines }}</td><td>{{ file.reason }}</td><td class="error">{{ file.error }}</td></tr>{% else %}<tr><td colspan="8">No files.</td></tr>{% endfor %}
-</table>
+<section id="start-here">
+  <div class="sec-head">
+    <h2>Start here</h2>
+    <p>Findings first, then shipped code, then tests, each by size. {{ items.len() }} to look at{% if settled_count > 0 %}; {{ settled_count }} settled in review {% if settled_count == 1 %}is{% else %}are{% endif %} hidden{% endif %}.</p>
+  </div>
+  {% if items.is_empty() %}<p class="muted">Nothing needs attention.</p>{% else %}<ol class="work">
+{% for item in items %}  <li class="item">
+    <div class="item-top"><span class="chip {{ item.tone }}">{{ item.label }}</span>{% if item.test %}<span class="chip t">Test</span>{% endif %}{% if item.deferred %}<span class="chip t">Deferred</span>{% endif %}<h3>{{ item.title }}</h3></div>
+    <p class="why">{{ item.why }}{% if let Some(advice) = item.advice %} <span class="muted">{{ advice }}</span>{% endif %}</p>
+    <div class="facts">{% for fact in item.facts %}<span>{{ fact.key }} <b class="num">{{ fact.value }}</b></span>{% endfor %}{% for place in item.places %}<span class="loc">{% if let Some(href) = place.href %}<a href="{{ href }}">{{ place.text }}</a>{% else %}{{ place.text }}{% endif %}</span>{% endfor %}{% if item.more_places > 0 %}<span>and {{ item.more_places }} more places</span>{% endif %}</div>
+    {% if !item.blocks.is_empty() %}<details class="code"><summary>{{ item.blocks_label }}</summary>
+      <div class="pair{% if item.blocks.len() == 1 %} one{% endif %}">{% for block in item.blocks %}<div><div class="cap">{{ block.caption }}</div><pre class="src">{% for line in block.lines %}<span class="l{% if line.differs %} d{% endif %}" data-n="{{ line.number }}">{{ line.text }}</span>{% endfor %}</pre>{% if let Some(clipped) = block.clipped %}<p class="note">{{ clipped }}</p>{% endif %}</div>{% endfor %}</div>
+      {% if item.blocks.len() == 2 %}<p class="note">Highlighted: lines that differ between the two copies.</p>{% endif %}
+    </details>{% endif %}
+    {% if item.unavailable %}<p class="note">Source not available when this report was rendered.</p>{% endif %}
+  </li>
+{% endfor %}</ol>{% endif %}
+  {% if source_capped %}<p class="note">Source shown for the first {{ source_cap }} items.</p>{% endif %}
+  {% if !settled.is_empty() %}<details class="settled"><summary>Show {{ settled_count }} settled {% if settled_count == 1 %}item{% else %}items{% endif %}</summary>
+    <ul>{% for row in settled %}<li><span class="chip ok">{{ row.status }}</span><span class="chip t">{{ row.label }}</span><b>{{ row.title }}</b>{% if let Some(place) = row.place %}<span class="loc">{% if let Some(href) = place.href %}<a href="{{ href }}">{{ place.text }}</a>{% else %}{{ place.text }}{% endif %}</span>{% endif %}{% if !row.reason.is_empty() %}<span class="muted">{{ row.reason }}</span>{% endif %}</li>{% endfor %}</ul>
+  </details>{% endif %}
+  <div class="more"><a href="#all-copied">All {{ group_count }} copied-code groups</a> · <a href="#all-complex">all {{ complex_total }} complex functions</a></div>
+</section>
+
+<section>
+  <div class="sec-head">
+    <h2>Where it concentrates</h2>
+    <p>Production directories by complexity weight (cyclomatic complexity × √lines, summed per function). Copied lines show where duplication sits.</p>
+  </div>
+  {% if concentration.is_empty() %}<p class="muted">No production directory carries complexity or copied code.</p>{% else %}<div class="tablebox">
+    <table>
+      <thead><tr><th>Directory</th><th class="r">Code lines</th><th>Complexity weight</th><th class="r">Over limit</th><th>Copied lines</th></tr></thead>
+      <tbody>{% for row in concentration %}<tr><td><code>{{ row.directory }}</code></td><td class="r num">{{ row.code_lines }}</td><td><div class="barcell"><div class="bar cx"><i style="width:{{ row.weight_bar }}%"></i></div><span class="num">{{ row.weight }}</span></div></td><td class="r num{% if row.over_limit == 0 %} zero{% endif %}">{{ row.over_limit }}</td><td>{% if row.copied_bar > 0 %}<div class="barcell"><div class="bar dup"><i style="width:{{ row.copied_bar }}%"></i></div><span class="num">{{ row.copied }}</span></div>{% else %}<span class="zero">—</span>{% endif %}</td></tr>{% endfor %}</tbody>
+    </table>
+  </div>{% endif %}
+</section>
+
+<section id="all-complex">
+  <div class="sec-head">
+    <h2>Complex functions</h2>
+    <p>Cyclomatic complexity counts the independent paths through a function. The limit is {{ limit }} (marked on each bar). {{ complex_total }} over it{% if complex_hidden > 0 %}; the {{ complex.len() }} largest are listed, all are in the embedded JSON{% endif %}.</p>
+  </div>
+  {% if complex.is_empty() %}<p class="muted">No function is over the limit.</p>{% else %}<div class="tablebox">
+    <table>
+      <thead><tr><th>Function</th><th>Cyclomatic</th><th class="r">Lines</th><th class="r">Nesting</th><th>Location</th></tr></thead>
+      <tbody>{% for row in complex %}<tr><td><code>{{ row.name }}</code>{% if row.test %} <span class="chip t">Test</span>{% endif %}</td><td><div class="barcell"><div class="bar cx"><i style="width:{{ row.bar }}%"></i><span class="lim" style="left:{{ limit_bar }}%"></span></div><span class="num">{{ row.cyclomatic }}</span></div></td><td class="r num">{{ row.lines }}</td><td class="r num">{{ row.nesting }}</td><td class="loc">{% if let Some(href) = row.place.href %}<a href="{{ href }}">{{ row.place.text }}</a>{% else %}{{ row.place.text }}{% endif %}</td></tr>{% endfor %}</tbody>
+    </table>
+  </div>{% endif %}
+</section>
+
+<section id="all-copied">
+  <div class="sec-head">
+    <h2>Copied code</h2>
+    <p>Clones are grouped when they connect the same functions, so one copied helper shows once instead of once per pair. {{ production_groups }} production and {{ test_groups }} test groups{% if groups_hidden > 0 %}; the {{ groups.len() }} largest are listed, all are in the embedded JSON{% endif %}.</p>
+  </div>
+  {% if groups.is_empty() %}<p class="muted">No copied code was found.</p>{% else %}<div class="groups">{% for group in groups %}
+    <details class="grp"><summary><span class="chip {{ group.tone }}">{{ group.label }}</span><b>{{ group.title }}</b><span class="n num">{{ group.copied_lines }} copied lines · {{ group.function_count }} functions</span></summary>
+      <ul>{% for place in group.places %}<li class="loc">{% if let Some(href) = place.href %}<a href="{{ href }}">{{ place.text }}</a>{% else %}{{ place.text }}{% endif %}</li>{% endfor %}{% if group.more_places > 0 %}<li>and {{ group.more_places }} more places</li>{% endif %}</ul>
+      {% if !group.functions.is_empty() %}<p class="note">Functions: {% for name in group.functions %}<code>{{ name }}</code>{% if !loop.last %}, {% endif %}{% endfor %}{% if group.more_functions > 0 %} and {{ group.more_functions }} more{% endif %}</p>{% endif %}
+    </details>{% endfor %}
+  </div>{% endif %}
+</section>
+
+<section>
+  <div class="sec-head">
+    <h2>All functions</h2>
+    <p class="num">{{ function_total }} functions, heaviest first. Most need no action.</p>
+  </div>
+  <div class="filters">
+    <input id="fn-q" type="search" placeholder="Filter by name or path" aria-label="Filter functions">
+    <div class="seg" role="group" aria-label="Category"><button aria-pressed="true" data-c="all">All</button><button aria-pressed="false" data-c="production">Production</button><button aria-pressed="false" data-c="test">Tests</button></div>
+  </div>
+  <div class="tablebox">
+    <table>
+      <thead><tr><th>Function</th><th class="r">Weight</th><th class="r">Cyclomatic</th><th class="r">Lines</th><th class="r">Nesting</th><th>Location</th></tr></thead>
+      <tbody id="fns" data-link="{{ link_prefix }}">{% for row in functions %}<tr><td><code>{{ row.name }}</code></td><td class="r num">{{ row.weight }}</td><td class="r num{% if row.over %} over{% endif %}">{{ row.cyclomatic }}</td><td class="r num">{{ row.lines }}</td><td class="r num">{{ row.nesting }}</td><td class="loc">{% if let Some(href) = row.place.href %}<a href="{{ href }}">{{ row.place.text }}</a>{% else %}{{ row.place.text }}{% endif %}</td></tr>{% endfor %}</tbody>
+    </table>
+  </div>
+  <p class="muted note" id="fn-count">Showing the {{ functions.len() }} heaviest functions. Turn on JavaScript to browse all {{ function_total }}.</p>
+  <div><button class="btn" id="fn-more" type="button" hidden>Show more</button></div>
+</section>
+
+<details class="audit">
+  <summary>Audit details</summary>
+  <div class="audit-grid">{% for group in audit %}
+    <div><h4>{{ group.title }}</h4><dl class="kv">{% for row in group.rows %}<dt>{{ row.key }}</dt><dd>{{ row.value }}</dd>{% endfor %}</dl></div>{% endfor %}
+    <div><h4>Machine-readable report</h4><p>The full JSON report is embedded in this page for tools and LLMs. It matches <code>--format json</code>. Read it with the selector below.</p><p><code>JSON.parse(document.getElementById("deburr-report").textContent)</code></p><p><button class="btn" id="copy-selector" type="button">Copy selector</button> <span id="copy-message" class="muted"></span></p></div>
+  </div>
 </details>
+</div>
+<script type="application/json" id="deburr-report">{{ json|safe }}</script>
+<script>{{ js|safe }}</script>
 </body>
 </html>
