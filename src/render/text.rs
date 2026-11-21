@@ -1,195 +1,157 @@
-//! Plain-text rendering and the embedded cleanup guide.
+//! Plain-text rendering over the shared summary, and the embedded cleanup
+//! guide.
 
 use std::io::{self, Write};
 
-use super::{
-    Source, Style, clone_text, endpoint_text, enum_name, finding_text, function_text, ledger_of,
-    location, provenance_text, ranked_functions, review_fields,
+use super::summary::{
+    ChangeEntry, FactState, WorkItem, WorkKind, count, summarize, summarize_comparison,
 };
-use crate::report::{
-    AmbiguousMatch, Category, Change, ChangeState, Comparison, FileStatus, Function, MetricBucket,
-    MetricDelta, Report, ReviewCounts, ReviewItem,
-};
+use super::{Source, Style};
+use crate::report::{Category, Comparison, Location, Report};
 
-/// Functions listed per hotspot bucket; JSON and HTML carry them all.
-const HOTSPOT_LIMIT: usize = 20;
+/// Worklist items and change entries shown per list; JSON and HTML carry them
+/// all.
+const SHOWN: usize = 10;
+
+/// Locations named per item before `+N more`.
+const PLACES: usize = 3;
+
+const RED: &str = "31";
+const GREEN: &str = "32";
+const YELLOW: &str = "33";
+const MAGENTA: &str = "35";
+const DIM: &str = "2";
 
 const CLEANUP_GUIDE: &str = include_str!("../../docs/cleanup.md");
 
-/// Writes the text report.
+/// Writes the text report: verdict, hints, and the first items to work on.
 ///
 /// # Errors
 ///
 /// Returns an I/O error when writing fails.
 pub fn report(
     report: &Report,
-    _source: &Source,
-    _style: Style,
+    source: &Source,
+    style: Style,
     out: &mut dyn Write,
 ) -> io::Result<()> {
-    writeln!(out, "Deburr report (schema {})", report.schema_version)?;
-    writeln!(
-        out,
-        "Analyzer: {} {}",
-        report.analyzer.id, report.analyzer.version
-    )?;
-    writeln!(out, "Provenance: {}", provenance_text(&report.provenance))?;
-    writeln!(out, "Language: {}", report.config.language)?;
-    writeln!(out, "Scope: {}", report.scope.languages.join(","))?;
+    let summary = summarize(report, source.name());
+    let color = style.color;
 
-    let coverage = &report.coverage;
-    writeln!(
-        out,
-        "Coverage: discovered={} analyzed={} excluded={} unsupported={} read_errors={} parse_errors={} symlinks={} excluded_directories={}",
-        coverage.discovered,
-        coverage.analyzed,
-        coverage.excluded,
-        coverage.unsupported,
-        coverage.read_errors,
-        coverage.parse_errors,
-        coverage.symlinks,
-        coverage.excluded_directories,
-    )?;
-    if coverage.analyzed == 0 {
-        writeln!(out, "Analysis: no analyzable Go or TypeScript files")?;
+    write!(out, "deburr · {}", summary.name)?;
+    if !summary.commit.is_empty() {
+        write!(out, " @ {}", summary.commit)?;
     }
 
-    metric_bucket(out, "All", &report.metrics.all)?;
-    metric_bucket(out, "Production", &report.metrics.production)?;
-    metric_bucket(out, "Test", &report.metrics.test)?;
-    writeln!(
-        out,
-        "Files: {} discovered entries; use JSON/HTML for the full inventory",
-        report.files.len()
-    )?;
-
-    let failures: Vec<_> = report
-        .files
-        .iter()
-        .filter(|file| matches!(file.status, FileStatus::ReadError | FileStatus::ParseError))
-        .collect();
-    if !failures.is_empty() {
-        writeln!(out, "Source failures ({})", failures.len())?;
-        for file in failures {
-            let message = if file.error.is_empty() {
-                &file.reason
-            } else {
-                &file.error
-            };
-
-            writeln!(
-                out,
-                "- {} [{}] {message}",
-                file.path,
-                enum_name(&file.status)
-            )?;
-        }
-    }
-
-    writeln!(
-        out,
-        "\nFunction hotspots (ranked by raw mass; JSON/HTML include all {})",
-        report.functions.len()
-    )?;
-    let in_bucket = |keep: fn(Category) -> bool| -> Vec<&Function> {
-        report
-            .functions
-            .iter()
-            .filter(|function| keep(function.category))
-            .collect()
-    };
-    let other = in_bucket(|category| !matches!(category, Category::Production | Category::Test));
-    hotspots(
-        out,
-        "Production",
-        &in_bucket(|category| category == Category::Production),
-    )?;
-    hotspots(
-        out,
-        "Test",
-        &in_bucket(|category| category == Category::Test),
-    )?;
-    if !other.is_empty() {
-        hotspots(out, "Other", &other)?;
-    }
-
-    writeln!(out, "\nFindings ({})", report.findings.len())?;
-    for finding in &report.findings {
+    write!(out, " · {} files analyzed", count(report.coverage.analyzed))?;
+    if report.coverage.excluded > 0 {
         write!(
             out,
-            "- {}:{}:{}-{}:{} [{}] {}: {} identity_ambiguous={}",
-            finding.path,
-            finding.start.line,
-            finding.start.column,
-            finding.end.line,
-            finding.end.column,
-            finding.severity,
-            finding.rule,
-            finding.message,
-            finding.identity_ambiguous,
+            " ({} vendor/generated skipped)",
+            count(report.coverage.excluded)
         )?;
-        if !finding.details.is_empty() {
-            let details: Vec<String> = finding
-                .details
-                .iter()
-                .map(|detail| format!("{}={}", detail.key, detail.value))
-                .collect();
-            write!(out, " ({})", details.join(", "))?;
-        }
+    }
 
+    writeln!(out, "\n")?;
+
+    let verdict = &summary.verdict;
+    for (label, fact, attention) in [
+        ("Complexity", &verdict.complexity, YELLOW),
+        ("Duplication", &verdict.duplication, MAGENTA),
+        ("Findings", &verdict.findings, RED),
+    ] {
+        let tint = match fact.state {
+            FactState::Clear => GREEN,
+            FactState::Attention => attention,
+            FactState::NotMeasured => DIM,
+        };
+
+        writeln!(
+            out,
+            "  {} {label:<13}{}",
+            paint(color, tint, "●"),
+            fact.headline
+        )?;
+        if !fact.detail.is_empty() {
+            writeln!(out, "{:17}{}", "", fact.detail)?;
+        }
+    }
+
+    if !summary.hints.is_empty() {
         writeln!(out)?;
     }
 
-    let duplication = &report.duplication;
-    write!(
-        out,
-        "\nDuplication: {} min_tokens={} min_lines={}",
-        enum_name(&duplication.status),
-        duplication.min_tokens,
-        duplication.min_lines,
-    )?;
-    if !duplication.error.is_empty() {
-        write!(out, " error={}", duplication.error)?;
+    for hint in &summary.hints {
+        writeln!(out, "  {} {hint}", paint(color, YELLOW, "!"))?;
     }
 
     writeln!(out)?;
-    for measured in &duplication.categories {
-        writeln!(
-            out,
-            "- {}: {:.2}% duplication ({} of {} code lines across {} files)",
-            measured.category.as_str(),
-            measured.percentage,
-            measured.duplicated_code_lines,
-            measured.code_lines,
-            measured.files,
-        )?;
+    if summary.worklist.is_empty() {
+        writeln!(out, "No open items.")?;
+    } else {
+        writeln!(out, "Start here")?;
     }
 
-    for clone in &duplication.clones {
-        writeln!(
-            out,
-            "- clone {} family={} category={} tokens={} ambiguous={}",
-            clone.id,
-            clone.family_id,
-            clone.category.as_str(),
-            clone.tokens,
-            clone.identity_ambiguous,
-        )?;
-        for endpoint in &clone.endpoints {
-            writeln!(out, "  - {}", endpoint_text(endpoint))?;
+    for (index, item) in summary.worklist.iter().take(SHOWN).enumerate() {
+        let word = kind_word(item.kind);
+        let tint = match item.kind {
+            WorkKind::Finding => RED,
+            WorkKind::Complex => YELLOW,
+            WorkKind::Copied => MAGENTA,
+        };
+        let mut tags = String::new();
+
+        if item.category == Category::Test {
+            tags.push_str(" [test]");
         }
+
+        if item.deferred {
+            tags.push_str(" [deferred]");
+        }
+
+        writeln!(
+            out,
+            "{:>3}  {}{} {}{tags}",
+            index + 1,
+            paint(color, tint, word),
+            " ".repeat(8usize.saturating_sub(word.len())),
+            item.title
+        )?;
+
+        let indent = " ".repeat(14);
+        writeln!(out, "{indent}{}", item.why)?;
+        if let Some(advice) = &item.advice {
+            writeln!(out, "{indent}{advice}")?;
+        }
+
+        writeln!(out, "{indent}{}", places(item))?;
     }
 
-    let ledger = ledger_of(report);
-    writeln!(out, "\nReview: {}", counts_text(&ledger.counts))?;
-    for item in &ledger.items {
-        review_item(out, item)?;
+    if summary.worklist.len() > SHOWN {
+        writeln!(out, "     … {} more", summary.worklist.len() - SHOWN)?;
     }
 
-    Ok(())
+    if summary.settled > 0 {
+        writeln!(
+            out,
+            "\n{} {} settled in review",
+            count(summary.settled),
+            if summary.settled == 1 {
+                "item"
+            } else {
+                "items"
+            }
+        )?;
+    }
+
+    writeln!(
+        out,
+        "\nFull report:  deburr audit . --format html --output deburr.html"
+    )?;
+    writeln!(out, "For tools:    deburr audit . --format json")
 }
 
-/// Writes the text comparison.
+/// Writes the text comparison: the verdict, what got worse, what improved.
 ///
 /// # Errors
 ///
@@ -197,153 +159,43 @@ pub fn report(
 pub fn comparison(
     comparison: &Comparison,
     _source: &Source,
-    _style: Style,
+    style: Style,
     out: &mut dyn Write,
 ) -> io::Result<()> {
-    writeln!(
-        out,
-        "Deburr comparison (schema {})",
-        comparison.schema_version
-    )?;
-    writeln!(
-        out,
-        "Analyzer: {} {} -> {} {}",
-        comparison.before_analyzer.id,
-        comparison.before_analyzer.version,
-        comparison.after_analyzer.id,
-        comparison.after_analyzer.version,
-    )?;
-    writeln!(
-        out,
-        "Before provenance: {}",
-        provenance_text(&comparison.before_provenance)
-    )?;
-    writeln!(
-        out,
-        "After provenance: {}",
-        provenance_text(&comparison.after_provenance)
-    )?;
-    writeln!(out, "Compatible: {}", comparison.compatible)?;
-    writeln!(out, "Complete: {}", comparison.complete)?;
-    if !comparison.compatible || !comparison.complete {
+    let summary = summarize_comparison(comparison);
+    let color = style.color;
+
+    writeln!(out, "deburr · comparison · {}", summary.verdict)?;
+
+    for (heading, tint, entries) in [
+        ("Got worse", RED, &summary.worse),
+        ("Improved", GREEN, &summary.better),
+    ] {
+        if entries.is_empty() {
+            continue;
+        }
+
+        writeln!(out, "\n{}", paint(color, tint, heading))?;
+        for entry in entries.iter().take(SHOWN) {
+            writeln!(out, "  {}", entry_line(entry, color))?;
+        }
+
+        if entries.len() > SHOWN {
+            writeln!(out, "  … {} more", entries.len() - SHOWN)?;
+        }
+    }
+
+    if summary.unmatched > 0 {
         writeln!(
             out,
-            "Change conclusion: unavailable; no finding, function, or clone improvement claim was made."
+            "\n{} {} could not be matched between the reports.",
+            count(summary.unmatched),
+            if summary.unmatched == 1 {
+                "item"
+            } else {
+                "items"
+            }
         )?;
-    }
-
-    if !comparison.reason.is_empty() {
-        writeln!(out, "Reason: {}", comparison.reason)?;
-    }
-
-    let before = &comparison.before_coverage;
-    let after = &comparison.after_coverage;
-    writeln!(
-        out,
-        "Coverage: before analyzed={} read_errors={} parse_errors={}; after analyzed={} read_errors={} parse_errors={}",
-        before.analyzed,
-        before.read_errors,
-        before.parse_errors,
-        after.analyzed,
-        after.read_errors,
-        after.parse_errors,
-    )?;
-    if let Some(delta) = &comparison.metrics_delta {
-        metric_delta(out, "All", &delta.all)?;
-        metric_delta(out, "Production", &delta.production)?;
-        metric_delta(out, "Test", &delta.test)?;
-    } else {
-        writeln!(out, "Metrics delta: unavailable")?;
-    }
-
-    writeln!(
-        out,
-        "Review before: {}",
-        counts_text(&comparison.before_review.counts)
-    )?;
-    writeln!(
-        out,
-        "Review after: {}",
-        counts_text(&comparison.after_review.counts)
-    )?;
-
-    writeln!(out, "New findings ({})", comparison.new_findings.len())?;
-    for finding in &comparison.new_findings {
-        writeln!(out, "- {}", finding_text(finding))?;
-    }
-
-    writeln!(
-        out,
-        "No longer reported findings ({})",
-        comparison.resolved_findings.len()
-    )?;
-    for finding in &comparison.resolved_findings {
-        writeln!(out, "- {}", finding_text(finding))?;
-    }
-
-    writeln!(
-        out,
-        "Finding changes ({})",
-        comparison.finding_changes.len()
-    )?;
-    for change in &comparison.finding_changes {
-        change_line(out, change, finding_text)?;
-    }
-
-    ambiguous_matches(out, "finding", &comparison.ambiguous_findings)?;
-
-    writeln!(
-        out,
-        "Function changes ({})",
-        comparison.function_changes.len()
-    )?;
-    for change in &comparison.function_changes {
-        change_line(out, change, function_text)?;
-        if matches!(
-            change.state,
-            ChangeState::ResolvedThreshold
-                | ChangeState::DeletedFunction
-                | ChangeState::SourceRemoved
-        ) {
-            writeln!(out, "  note=no_behavior_conclusion")?;
-        }
-    }
-
-    ambiguous_matches(out, "function", &comparison.ambiguous_functions)?;
-
-    writeln!(out, "Clone changes ({})", comparison.clone_changes.len())?;
-    for change in &comparison.clone_changes {
-        change_line(out, change, clone_text)?;
-    }
-
-    ambiguous_matches(out, "clone", &comparison.ambiguous_clones)?;
-
-    let duplication = &comparison.duplication;
-    write!(
-        out,
-        "Duplication: before={} after={} comparable={} before_config={}/{}/{} after_config={}/{}/{}",
-        enum_name(&duplication.before_status),
-        enum_name(&duplication.after_status),
-        duplication.comparable,
-        duplication.before_config.requested,
-        duplication.before_config.min_tokens,
-        duplication.before_config.min_lines,
-        duplication.after_config.requested,
-        duplication.after_config.min_tokens,
-        duplication.after_config.min_lines,
-    )?;
-    if !duplication.reason.is_empty() {
-        write!(out, " reason={}", duplication.reason)?;
-    }
-
-    writeln!(out)?;
-    for (side, clones) in [
-        ("before", &duplication.before_clones),
-        ("after", &duplication.after_clones),
-    ] {
-        for clone in clones {
-            writeln!(out, "- {side} clone {}", clone_text(clone))?;
-        }
     }
 
     Ok(())
@@ -358,184 +210,60 @@ pub fn cleanup_guide(out: &mut dyn Write) -> io::Result<()> {
     out.write_all(CLEANUP_GUIDE.as_bytes())
 }
 
-fn counts_text(counts: &ReviewCounts) -> String {
-    format!(
-        "total={} unreviewed={} refactored={} retained={} deferred={} stale={}",
-        counts.total,
-        counts.unreviewed,
-        counts.refactored,
-        counts.retained,
-        counts.deferred,
-        counts.stale,
-    )
-}
-
-fn metric_bucket(out: &mut dyn Write, name: &str, bucket: &MetricBucket) -> io::Result<()> {
-    write!(
-        out,
-        "{name} metrics: code_lines={} functions={} cyclomatic={} max_nesting={} mass={:.6} high_complexity_functions={} high_complexity_mass={:.6}",
-        bucket.code_lines,
-        bucket.functions,
-        bucket.cyclomatic,
-        bucket.max_nesting,
-        bucket.mass,
-        bucket.high_complexity_functions,
-        bucket.high_complexity_mass,
-    )?;
-    match bucket.high_complexity_mass_share {
-        Some(share) => writeln!(out, " high_complexity_mass_share={share:.6}"),
-        None => writeln!(out, " high_complexity_mass_share=null"),
+/// Wraps `text` in an ANSI color only when `color` is on, so piped output
+/// never holds an escape byte.
+fn paint(color: bool, code: &str, text: &str) -> String {
+    if color {
+        format!("\x1b[{code}m{text}\x1b[0m")
+    } else {
+        text.to_owned()
     }
 }
 
-fn metric_delta(out: &mut dyn Write, name: &str, delta: &MetricDelta) -> io::Result<()> {
-    write!(
-        out,
-        "{name} metric delta: code_lines={} functions={} cyclomatic={} max_nesting={} mass={:+.6} high_complexity_functions={} high_complexity_mass={:+.6}",
-        delta.code_lines,
-        delta.functions,
-        delta.cyclomatic,
-        delta.max_nesting,
-        delta.mass,
-        delta.high_complexity_functions,
-        delta.high_complexity_mass,
-    )?;
-    match delta.high_complexity_mass_share {
-        Some(share) => writeln!(out, " high_complexity_mass_share={share:+.6}"),
-        None => writeln!(out, " high_complexity_mass_share=unavailable"),
+pub(super) fn kind_word(kind: WorkKind) -> &'static str {
+    match kind {
+        WorkKind::Finding => "finding",
+        WorkKind::Complex => "complex",
+        WorkKind::Copied => "copied",
     }
 }
 
-fn hotspots(out: &mut dyn Write, bucket: &str, functions: &[&Function]) -> io::Result<()> {
-    let ranked = ranked_functions(functions.iter().copied());
-    let shown = ranked.len().min(HOTSPOT_LIMIT);
-    writeln!(out, "{bucket} hotspots ({shown} of {})", ranked.len())?;
-
-    for function in &ranked[..shown] {
-        let signals = &function.structural_signals;
-        write!(
-            out,
-            "- {} {} [{}] sloc={} cyclomatic={} nesting={} mass={:.6}",
-            location(&function.path, function.start, function.end),
-            function.name,
-            function.category.as_str(),
-            function.sloc,
-            function.cyclomatic,
-            function.max_nesting,
-            function.mass,
-        )?;
-        if function.high_complexity {
-            write!(out, " high_complexity=true")?;
-        }
-
-        writeln!(
-            out,
-            " flat_guards={} field_mappings={} nested_branches={} assertion_like_calls={} identity_ambiguous={}",
-            signals.flat_guards,
-            signals.field_mappings,
-            signals.nested_branches,
-            signals.assertion_like_calls,
-            function.identity_ambiguous,
-        )?;
-    }
-
-    if ranked.len() > shown {
-        writeln!(
-            out,
-            "  ... {} more; use JSON/HTML for the full inventory",
-            ranked.len() - shown
-        )?;
-    }
-
-    Ok(())
+/// `path:line` for a location, so terminals make it clickable.
+fn place(location: &Location) -> String {
+    format!("{}:{}", location.path, location.start.line)
 }
 
-fn review_item(out: &mut dyn Write, item: &ReviewItem) -> io::Result<()> {
-    write!(
-        out,
-        "- {} {} [{}]",
-        enum_name(&item.kind),
-        item.id,
-        enum_name(&item.status)
-    )?;
-    if !item.locations.is_empty() {
-        let locations: Vec<String> = item
-            .locations
-            .iter()
-            .map(|at| location(&at.path, at.start, at.end))
-            .collect();
-        write!(out, " locations={}", locations.join(";"))?;
+/// The item's first few locations, then how many more there are.
+fn places(item: &WorkItem) -> String {
+    let named: Vec<String> = item.locations.iter().take(PLACES).map(place).collect();
+    let mut text = named.join("  ");
+
+    if item.locations.len() > PLACES {
+        text.push_str(&format!("  +{} more", item.locations.len() - PLACES));
     }
 
-    writeln!(out, "{}", review_fields(item))
+    text
 }
 
-/// One changed function, finding, or clone as a single line.
-fn change_line<T>(
-    out: &mut dyn Write,
-    change: &Change<T>,
-    describe: fn(&T) -> String,
-) -> io::Result<()> {
-    write!(out, "- {}", enum_name(&change.state))?;
-    if let Some(basis) = &change.match_basis {
-        write!(out, " match={}", enum_name(basis))?;
+fn entry_line(entry: &ChangeEntry, color: bool) -> String {
+    let tint = match entry.kind {
+        WorkKind::Finding => RED,
+        WorkKind::Complex => YELLOW,
+        WorkKind::Copied => MAGENTA,
+    };
+    let word = kind_word(entry.kind);
+    let mut line = format!(
+        "{}{} {}  {} → {}",
+        paint(color, tint, word),
+        " ".repeat(8usize.saturating_sub(word.len())),
+        entry.title,
+        entry.before,
+        entry.after
+    );
+
+    if let Some(location) = &entry.location {
+        line.push_str(&format!("  {}", place(location)));
     }
 
-    if let Some(before) = &change.before {
-        write!(out, " before={}", describe(before))?;
-    }
-
-    if let Some(after) = &change.after {
-        write!(out, " after={}", describe(after))?;
-    }
-
-    if !change.before_ids.is_empty() || !change.after_ids.is_empty() {
-        write!(
-            out,
-            " before_ids={} after_ids={}",
-            change.before_ids.join(","),
-            change.after_ids.join(",")
-        )?;
-    }
-
-    for (side, review) in [
-        ("before", &change.before_review),
-        ("after", &change.after_review),
-    ] {
-        if let Some(item) = review {
-            write!(
-                out,
-                " {side}_review={}{}",
-                enum_name(&item.status),
-                review_fields(item)
-            )?;
-        }
-    }
-
-    writeln!(out)
-}
-
-fn ambiguous_matches(
-    out: &mut dyn Write,
-    kind: &str,
-    matches: &[AmbiguousMatch],
-) -> io::Result<()> {
-    if matches.is_empty() {
-        return Ok(());
-    }
-
-    writeln!(out, "Ambiguous {kind} matches ({})", matches.len())?;
-    for ambiguous in matches {
-        writeln!(
-            out,
-            "- {}:{}: {} before={} after={}",
-            ambiguous.path,
-            ambiguous.rule,
-            ambiguous.message,
-            ambiguous.before_ids.join(","),
-            ambiguous.after_ids.join(","),
-        )?;
-    }
-
-    Ok(())
+    line
 }
