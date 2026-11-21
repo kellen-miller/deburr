@@ -47,7 +47,7 @@ fn clone_pairs_that_share_a_helper_collapse_into_one_group() {
             clone(
                 &format!("c{pair}"),
                 Category::Production,
-                [region(pair), region(pair + 1)],
+                &[region(pair), region(pair + 1)],
             )
         })
         .collect();
@@ -78,7 +78,7 @@ fn closures_inside_a_listed_function_do_not_own_the_clone() {
     report.duplication.clones = vec![clone(
         "c1",
         Category::Production,
-        [
+        &[
             Region {
                 path: "a.go",
                 start: 12,
@@ -125,8 +125,8 @@ fn overlapping_regions_in_one_file_read_as_one_place() {
         functions: &["pkg/a.go::Second"],
     };
     report.duplication.clones = vec![
-        clone("c1", Category::Production, [first, second()]),
-        clone("c2", Category::Production, [first_longer, second()]),
+        clone("c1", Category::Production, &[first, second()]),
+        clone("c2", Category::Production, &[first_longer, second()]),
     ];
     let summary = summarize(&report, "repo");
     let copied = summary
@@ -152,7 +152,7 @@ fn repeated_blocks_in_one_function_and_file_level_clones_get_their_own_titles() 
         clone(
             "inside",
             Category::Production,
-            [
+            &[
                 Region {
                     path: "a.go",
                     start: 5,
@@ -170,7 +170,7 @@ fn repeated_blocks_in_one_function_and_file_level_clones_get_their_own_titles() 
         clone(
             "file-level",
             Category::Production,
-            [
+            &[
                 Region {
                     path: "x.go",
                     start: 1,
@@ -227,7 +227,7 @@ fn comparison_summary_groups_new_and_removed_clones() {
     after.duplication.clones = vec![clone(
         "c1",
         Category::Production,
-        [
+        &[
             Region {
                 path: "a.go",
                 start: 1,

@@ -81,7 +81,7 @@ pub(crate) fn function(path: &str, name: &str, line: u32, sloc: u32, cyclomatic:
     .expect("function")
 }
 
-pub(crate) fn clone(id: &str, category: Category, regions: [Region<'_>; 2]) -> CodeClone {
+pub(crate) fn clone(id: &str, category: Category, regions: &[Region<'_>; 2]) -> CodeClone {
     let endpoint = |region: &Region<'_>| {
         json!({
             "path": region.path,

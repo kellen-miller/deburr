@@ -140,7 +140,7 @@ fn group_advice_follows_category_and_locality() {
         clone(
             "file",
             Category::Production,
-            [
+            &[
                 Region {
                     path: "pkg/one.go",
                     start: 2,
@@ -158,7 +158,7 @@ fn group_advice_follows_category_and_locality() {
         clone(
             "package",
             Category::Production,
-            [
+            &[
                 Region {
                     path: "pkg/two.go",
                     start: 2,
@@ -176,7 +176,7 @@ fn group_advice_follows_category_and_locality() {
         clone(
             "across",
             Category::Production,
-            [
+            &[
                 Region {
                     path: "other/three.go",
                     start: 2,
@@ -194,7 +194,7 @@ fn group_advice_follows_category_and_locality() {
         clone(
             "tests",
             Category::Test,
-            [
+            &[
                 Region {
                     path: "pkg/t_test.go",
                     start: 2,
@@ -262,7 +262,7 @@ fn worklist_ranks_findings_then_production_then_tests_by_size() {
         clone(
             "prod",
             Category::Production,
-            [
+            &[
                 Region {
                     path: "c.go",
                     start: 2,
@@ -280,7 +280,7 @@ fn worklist_ranks_findings_then_production_then_tests_by_size() {
         clone(
             "test",
             Category::Test,
-            [
+            &[
                 Region {
                     path: "a_test.go",
                     start: 100,
@@ -339,7 +339,7 @@ fn settled_items_are_hidden_and_counted_and_deferred_ones_stay_marked() {
     report.duplication.clones = vec![clone(
         "c1",
         Category::Production,
-        [
+        &[
             Region {
                 path: "p.go",
                 start: 1,
@@ -595,7 +595,7 @@ fn copied_lines_in_tooling_directories_trigger_the_hint_too() {
         clone(
             "tools",
             Category::Production,
-            [
+            &[
                 Region {
                     path: "scripts/a.go",
                     start: 1,
@@ -613,7 +613,7 @@ fn copied_lines_in_tooling_directories_trigger_the_hint_too() {
         clone(
             "core",
             Category::Production,
-            [
+            &[
                 Region {
                     path: "core/a.go",
                     start: 1,
