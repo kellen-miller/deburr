@@ -1,0 +1,30 @@
+name: Rust
+on:
+  pull_request:
+permissions:
+  contents: read
+concurrency:
+  group: rust-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  rust-check:
+    name: Cargo (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            checks: fmt clippy test build
+          - os: macos-latest
+            checks: test build
+          - os: windows-latest
+            checks: test build
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: kellen-miller/ci/.github/actions/rust-check@4f4e514ee184fbd03b393a6d0e4bccb5eea63a9a # main
+        with:
+          checks: ${{ matrix.checks }}
+          cache-key: ${{ matrix.os }}
