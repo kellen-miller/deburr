@@ -18,6 +18,9 @@ use serde_json::Value;
 
 const FLOAT_TOLERANCE: f64 = 1e-9;
 
+/// Every section [`project`] fills.
+const SECTIONS: &[&str] = &["files", "coverage", "metrics", "functions", "findings"];
+
 /// The structural signals compared per function.
 const FUNCTION_SIGNALS: &[&str] = &[
     "flat_guards",
@@ -46,6 +49,16 @@ impl Scalar {
                 None => Self::Float(number.as_f64().unwrap_or(f64::NAN)),
             },
             _ => Self::Null,
+        }
+    }
+
+    fn to_json(&self) -> Value {
+        match self {
+            Self::Int(value) => Value::from(*value),
+            Self::Float(value) => Value::from(*value),
+            Self::Text(value) => Value::from(value.as_str()),
+            Self::Bool(value) => Value::from(*value),
+            Self::Null => Value::Null,
         }
     }
 
@@ -102,6 +115,61 @@ impl Projection {
     /// Number of entries in `section`.
     pub(crate) fn len(&self, section: &str) -> usize {
         self.sections.get(section).map_or(0, BTreeMap::len)
+    }
+
+    /// The stored form of a projection: `{section: {key: {field: scalar}}}`,
+    /// where every key already carries its occurrence index.
+    pub(crate) fn to_json(&self) -> Value {
+        let sections = self.sections.iter().map(|(section, entries)| {
+            let entries = entries.iter().map(|(key, fields)| {
+                let fields = fields
+                    .iter()
+                    .map(|(name, scalar)| (name.clone(), scalar.to_json()))
+                    .collect::<serde_json::Map<String, Value>>();
+
+                (key.clone(), Value::Object(fields))
+            });
+
+            ((*section).to_owned(), Value::Object(entries.collect()))
+        });
+
+        Value::Object(sections.collect())
+    }
+
+    /// Reads a projection written by [`Projection::to_json`]. Sections are
+    /// restricted to the names [`project`] produces so they stay `'static`.
+    pub(crate) fn from_json(stored: &Value) -> Result<Self, String> {
+        let stored = stored
+            .as_object()
+            .ok_or_else(|| "stored projection is not an object".to_owned())?;
+        let mut projection = Self::default();
+
+        for (name, entries) in stored {
+            let section = SECTIONS
+                .iter()
+                .find(|known| **known == name)
+                .ok_or_else(|| format!("unknown section {name}"))?;
+            let entries = entries
+                .as_object()
+                .ok_or_else(|| format!("section {name} is not an object"))?;
+            let target = projection.sections.entry(section).or_default();
+
+            for (key, fields) in entries {
+                let fields = fields
+                    .as_object()
+                    .ok_or_else(|| format!("entry {name}/{key} is not an object"))?;
+
+                target.insert(
+                    key.clone(),
+                    fields
+                        .iter()
+                        .map(|(field, value)| (field.clone(), Scalar::from_json(Some(value))))
+                        .collect(),
+                );
+            }
+        }
+
+        Ok(projection)
     }
 }
 
@@ -479,6 +547,19 @@ mod tests {
         assert_eq!(mask_anonymous_digests("anon-abc"), "anon-abc");
         assert_eq!(mask_anonymous_digests("anon-"), "anon-");
         assert_eq!(mask_anonymous_digests("outer."), "outer.");
+    }
+
+    #[test]
+    fn stored_projection_round_trips() {
+        let original = project(&report(5, "analyzed"));
+        let stored = original.to_json();
+        let restored = Projection::from_json(&stored).expect("decode stored projection");
+
+        assert!(diff(&original, &restored).is_empty());
+        assert_eq!(restored.len("files"), 2);
+        assert_eq!(restored.to_json(), stored);
+        assert!(Projection::from_json(&json!({"bogus": {}})).is_err());
+        assert!(Projection::from_json(&json!({"files": []})).is_err());
     }
 
     #[test]
