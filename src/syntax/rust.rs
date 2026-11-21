@@ -11,6 +11,8 @@
 //! not parsed into expressions by the grammar, so code inside them is not
 //! measured.
 
+use std::ops::Range;
+
 use tree_sitter::Node;
 
 use super::{
@@ -38,6 +40,7 @@ pub static RULES: LanguageRules = LanguageRules {
         "try_expression",
     ],
     decision_weight: Some(decision_weight),
+    test_regions: Some(test_regions),
     nesting_kinds: &[
         "if_expression",
         "while_expression",
@@ -109,6 +112,95 @@ fn decision_weight(node: Node<'_>, source: &[u8]) -> u32 {
         }
         _ => 0,
     }
+}
+
+/// The byte ranges of inline test code, sorted and disjoint. A run of
+/// attributes (doc comments may sit between them) applies to the item after
+/// it. That item and its attributes are a test region when:
+///
+/// - an attribute is `cfg(..)` and names `test` outside `not(..)`, which
+///   includes `cfg(all(test, ..))` and `cfg(any(test, ..))`; or
+/// - the item is a function and an attribute's path ends in `test`
+///   (`#[test]`, `#[tokio::test]`, `#[sqlx::test(..)]`).
+///
+/// A region is never searched for nested regions: it is test code throughout.
+fn test_regions(root: Node<'_>, source: &[u8]) -> Vec<Range<usize>> {
+    let mut regions = Vec::new();
+    let mut pending = vec![root];
+
+    while let Some(parent) = pending.pop() {
+        let mut cursor = parent.walk();
+        let mut run_start = None;
+        let mut cfg_test = false;
+        let mut test_function = false;
+
+        for child in parent.named_children(&mut cursor) {
+            match child.kind() {
+                "attribute_item" => {
+                    run_start.get_or_insert(child.start_byte());
+
+                    if let Some(attribute) = child.named_child(0)
+                        && let Some(path) = attribute.named_child(0)
+                    {
+                        let path = &source[path.byte_range()];
+
+                        cfg_test |= path == b"cfg"
+                            && attribute
+                                .child_by_field_name("arguments")
+                                .is_some_and(|arguments| names_test(arguments, source));
+                        test_function |= path.rsplit(|&byte| byte == b':').next() == Some(b"test");
+                    }
+                }
+                "line_comment" | "block_comment" => {}
+                kind => {
+                    if let Some(start) = run_start.take()
+                        && (cfg_test || (test_function && kind == "function_item"))
+                    {
+                        regions.push(start..child.end_byte());
+                    } else {
+                        pending.push(child);
+                    }
+
+                    cfg_test = false;
+                    test_function = false;
+                }
+            }
+        }
+    }
+
+    regions.sort_by_key(|region| region.start);
+
+    regions
+}
+
+/// Whether a `cfg` predicate names `test` anywhere outside a `not(..)`.
+fn names_test(predicate: Node<'_>, source: &[u8]) -> bool {
+    let mut cursor = predicate.walk();
+    let mut negated = false;
+
+    for child in predicate.named_children(&mut cursor) {
+        match child.kind() {
+            "identifier" => {
+                let name = &source[child.byte_range()];
+
+                if name == b"test" {
+                    return true;
+                }
+
+                negated = name == b"not";
+            }
+            "token_tree" => {
+                if !negated && names_test(child, source) {
+                    return true;
+                }
+
+                negated = false;
+            }
+            _ => negated = false,
+        }
+    }
+
+    false
 }
 
 /// The rustc-like path of a function unit: the enclosing unit's name, the

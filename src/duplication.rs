@@ -25,13 +25,17 @@ pub struct DuplicationSettings {
 }
 
 /// One analyzed file of the category being measured, borrowed for detection.
+///
+/// A production file with inline tests appears twice, once per category: the
+/// production entry holds only the tokens and lines outside its test regions,
+/// the test entry only those inside. Tokens keep their real source positions.
 #[derive(Debug, Clone, Copy)]
 pub struct AnalyzedFile<'a> {
     pub path: &'a str,
     pub language: Language,
     pub source: &'a [u8],
     pub tokens: &'a [Token],
-    /// Index `n - 1` is true when line `n` holds code.
+    /// Index `n - 1` is true when line `n` holds code (of this category).
     pub code_lines: &'a [bool],
     /// The file's functions as reported, so clone endpoints can name them.
     pub functions: &'a [Function],
