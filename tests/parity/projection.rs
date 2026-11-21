@@ -18,10 +18,13 @@ use serde_json::Value;
 
 const FLOAT_TOLERANCE: f64 = 1e-9;
 
-/// The structural signals compared per function. The remaining signals
-/// (`flat_guards`, `field_mappings`, `assertion_like_calls`) join this list
-/// with the findings milestone, which implements them.
-const FUNCTION_SIGNALS: &[&str] = &["nested_branches"];
+/// The structural signals compared per function.
+const FUNCTION_SIGNALS: &[&str] = &[
+    "flat_guards",
+    "field_mappings",
+    "nested_branches",
+    "assertion_like_calls",
+];
 
 /// One projected value.
 #[derive(Debug, Clone, PartialEq)]
@@ -116,7 +119,8 @@ fn pick(object: &Value, names: &[&str]) -> Fields {
 /// code lines; the coverage totals and per-category rows; every metric
 /// bucket's code lines and function-derived totals; and each function's
 /// range, SLOC, cyclomatic, nesting, mass, signals, and flags, keyed by
-/// path, name, and occurrence index. Findings join with their milestone.
+/// path, name, and occurrence index; and each finding's range, owner, and
+/// ambiguity, keyed by path, rule, and occurrence index.
 pub(crate) fn project(report: &Value) -> Projection {
     let mut projection = Projection::default();
 
@@ -211,6 +215,40 @@ pub(crate) fn project(report: &Value) -> Projection {
         }
 
         projection.insert("functions", &key, fields);
+    }
+
+    for finding in report["findings"].as_array().into_iter().flatten() {
+        let key = format!(
+            "{}::{}",
+            finding["path"].as_str().unwrap_or_default(),
+            finding["rule"].as_str().unwrap_or_default()
+        );
+        let mut fields = Fields::new();
+
+        for (prefix, position) in [("start", &finding["start"]), ("end", &finding["end"])] {
+            for part in ["line", "column"] {
+                fields.insert(
+                    format!("{prefix}_{part}"),
+                    Scalar::from_json(position.get(part)),
+                );
+            }
+        }
+
+        // The owner is the only detail both versions agree on for every rule;
+        // `condition` text differs by design (go/printer layout).
+        let owner = finding["details"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|detail| detail["key"] == "owner")
+            .map(|detail| detail.get("value"));
+        fields.insert("owner".to_owned(), Scalar::from_json(owner.flatten()));
+        fields.insert(
+            "identity_ambiguous".to_owned(),
+            Scalar::Bool(finding["identity_ambiguous"].as_bool().unwrap_or(false)),
+        );
+
+        projection.insert("findings", &key, fields);
     }
 
     projection
@@ -363,6 +401,35 @@ mod tests {
                 .any(|d| d.key == "a.go#1" && d.field == "status")
         );
         assert!(diff(&go, &go).is_empty());
+    }
+
+    #[test]
+    fn findings_project_range_owner_and_occurrence() {
+        let finding = |line: i64, owner: &str| {
+            json!({
+                "path": "a.go",
+                "rule": "duplicate-branches",
+                "start": {"line": line, "column": 2},
+                "end": {"line": line + 4, "column": 2},
+                "details": [
+                    {"key": "owner", "value": owner},
+                    {"key": "candidate_only", "value": "true"},
+                ],
+            })
+        };
+        let go = project(&json!({"findings": [finding(3, "F"), finding(9, "G")]}));
+        let rust = project(&json!({"findings": [finding(3, "F"), finding(10, "G")]}));
+        let differences = diff(&go, &rust);
+
+        assert_eq!(go.len("findings"), 2);
+        assert!(go.sections["findings"].contains_key("a.go::duplicate-branches#2"));
+        assert!(differences.iter().all(|d| d.section == "findings"));
+        assert!(
+            differences
+                .iter()
+                .any(|d| d.key == "a.go::duplicate-branches#2" && d.field == "start_line")
+        );
+        assert!(!differences.iter().any(|d| d.field == "owner"));
     }
 
     #[test]

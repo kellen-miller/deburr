@@ -59,6 +59,70 @@ pub fn token_fingerprint(syntax: &Syntax, tokens: &[Token]) -> String {
     format!("sha256:{}", hex::encode(hasher.finalize()))
 }
 
+/// The text of `tokens`, each followed by a zero byte: the content that
+/// finding IDs, fingerprints, and branch equality are computed from.
+#[must_use]
+pub fn token_content(syntax: &Syntax, tokens: &[Token]) -> Vec<u8> {
+    let mut content = Vec::new();
+
+    for token in tokens {
+        content.extend_from_slice(syntax.token_text(token));
+        content.push(0);
+    }
+
+    content
+}
+
+/// What a finding's identity is derived from.
+#[derive(Debug, Clone, Copy)]
+pub struct FindingSketch<'a> {
+    pub path: &'a str,
+    pub rule: &'a str,
+    /// The identity name of the owning function (the part of its ID after `::`).
+    pub owner_identity: &'a str,
+    /// `sha256:<hex>` fingerprint of the owning function.
+    pub owner_fingerprint: &'a str,
+    /// [`token_content`] of the flagged code.
+    pub content: &'a [u8],
+    /// 1-based count of this rule's findings in the owner, in source order.
+    pub occurrence: usize,
+}
+
+/// `<rule>-<16 hex>`: the finding ID, stable while the flagged code, its
+/// owner's identity, and its position among the owner's findings hold.
+#[must_use]
+pub fn finding_id(sketch: &FindingSketch<'_>) -> String {
+    let mut hasher = Sha256::new();
+
+    for part in [
+        sketch.path.as_bytes(),
+        sketch.rule.as_bytes(),
+        sketch.owner_identity.as_bytes(),
+        sketch.content,
+    ] {
+        hasher.update(part);
+        hasher.update([0]);
+    }
+
+    hasher.update(sketch.occurrence.to_string());
+
+    format!("{}-{}", sketch.rule, hex::encode(&hasher.finalize()[..8]))
+}
+
+/// Digest of the flagged code and the function that holds it, so an edit to
+/// either marks the finding as changed.
+#[must_use]
+pub fn finding_fingerprint(sketch: &FindingSketch<'_>) -> String {
+    let mut hasher = Sha256::new();
+
+    hasher.update(b"finding\0");
+    hasher.update(sketch.owner_fingerprint.as_bytes());
+    hasher.update([0]);
+    hasher.update(sketch.content);
+
+    hex::encode(hasher.finalize())
+}
+
 /// `<package>/<path>::<identity>`: the report ID of a function.
 #[must_use]
 pub fn function_id(package: &str, path: &str, identity: &str) -> String {
@@ -163,8 +227,8 @@ pub fn assign_unit_identities(units: &[UnitSketch<'_>]) -> Vec<UnitIdentity> {
 #[cfg(test)]
 mod tests {
     use super::{
-        ManifestEntry, UnitSketch, assign_unit_identities, function_id, manifest_digest,
-        sha256_prefixed,
+        FindingSketch, ManifestEntry, UnitSketch, assign_unit_identities, finding_fingerprint,
+        finding_id, function_id, manifest_digest, sha256_prefixed,
     };
 
     fn sketch<'a>(
@@ -237,6 +301,47 @@ mod tests {
         assert_eq!(identities[2].name, "Outer.anon-11#2");
         assert!(identities[1].ambiguous && identities[2].ambiguous);
         assert!(!identities[0].ambiguous);
+    }
+
+    fn finding<'a>(
+        owner_fingerprint: &'a str,
+        content: &'a [u8],
+        occurrence: usize,
+    ) -> FindingSketch<'a> {
+        FindingSketch {
+            path: "a.go",
+            rule: "duplicate-branches",
+            owner_identity: "F",
+            owner_fingerprint,
+            content,
+            occurrence,
+        }
+    }
+
+    #[test]
+    fn finding_ids_have_a_rule_prefix_and_sixteen_hex_digits() {
+        let id = finding_id(&finding("sha256:aa", b"x\0", 1));
+        let digits = id.strip_prefix("duplicate-branches-").expect("rule prefix");
+
+        assert_eq!(digits.len(), 16);
+        assert!(digits.chars().all(|digit| digit.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn finding_ids_ignore_the_owner_fingerprint_but_fingerprints_do_not() {
+        let base = finding("sha256:aa", b"x\0", 1);
+        let edited_owner = finding("sha256:bb", b"x\0", 1);
+        let other_content = finding("sha256:aa", b"y\0", 1);
+        let second = finding("sha256:aa", b"x\0", 2);
+
+        assert_eq!(finding_id(&base), finding_id(&edited_owner));
+        assert_ne!(
+            finding_fingerprint(&base),
+            finding_fingerprint(&edited_owner)
+        );
+        assert_ne!(finding_id(&base), finding_id(&other_content));
+        assert_ne!(finding_id(&base), finding_id(&second));
+        assert_eq!(finding_fingerprint(&base), finding_fingerprint(&second));
     }
 
     #[test]
