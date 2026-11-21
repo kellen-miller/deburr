@@ -1,0 +1,310 @@
+{
+  "coverage": {
+    "category:generated#1": {
+      "analyzed": 0,
+      "discovered": 0,
+      "excluded": 0,
+      "parse_errors": 0,
+      "read_errors": 0,
+      "unsupported": 0
+    },
+    "category:production#1": {
+      "analyzed": 4,
+      "discovered": 4,
+      "excluded": 0,
+      "parse_errors": 0,
+      "read_errors": 0,
+      "unsupported": 0
+    },
+    "category:test#1": {
+      "analyzed": 2,
+      "discovered": 2,
+      "excluded": 0,
+      "parse_errors": 0,
+      "read_errors": 0,
+      "unsupported": 0
+    },
+    "category:testdata#1": {
+      "analyzed": 0,
+      "discovered": 0,
+      "excluded": 0,
+      "parse_errors": 0,
+      "read_errors": 0,
+      "unsupported": 0
+    },
+    "category:unsupported#1": {
+      "analyzed": 0,
+      "discovered": 0,
+      "excluded": 0,
+      "parse_errors": 0,
+      "read_errors": 0,
+      "unsupported": 0
+    },
+    "category:vendor#1": {
+      "analyzed": 0,
+      "discovered": 0,
+      "excluded": 0,
+      "parse_errors": 0,
+      "read_errors": 0,
+      "unsupported": 0
+    },
+    "total#1": {
+      "analyzed": 6,
+      "discovered": 6,
+      "excluded": 0,
+      "excluded_directories": 0,
+      "parse_errors": 0,
+      "read_errors": 0,
+      "symlinks": 0,
+      "unsupported": 0
+    }
+  },
+  "files": {
+    "snapshot/go/alpha.go#1": {
+      "category": "production",
+      "code_lines": 31,
+      "lines": 37,
+      "status": "analyzed"
+    },
+    "snapshot/go/alpha_test.go#1": {
+      "category": "test",
+      "code_lines": 19,
+      "lines": 23,
+      "status": "analyzed"
+    },
+    "snapshot/go/beta.go#1": {
+      "category": "production",
+      "code_lines": 27,
+      "lines": 39,
+      "status": "analyzed"
+    },
+    "snapshot/go/beta_test.go#1": {
+      "category": "test",
+      "code_lines": 24,
+      "lines": 29,
+      "status": "analyzed"
+    },
+    "snapshot/ts/one.ts#1": {
+      "category": "production",
+      "code_lines": 26,
+      "lines": 30,
+      "status": "analyzed"
+    },
+    "snapshot/ts/two.ts#1": {
+      "category": "production",
+      "code_lines": 27,
+      "lines": 30,
+      "status": "analyzed"
+    }
+  },
+  "functions": {
+    "snapshot/go/alpha.go::Label#1": {
+      "cyclomatic": 2,
+      "end_column": 1,
+      "end_line": 37,
+      "high_complexity": false,
+      "identity_ambiguous": false,
+      "mass": 4.898979485566356,
+      "max_nesting": 1,
+      "signal_assertion_like_calls": 0,
+      "signal_field_mappings": 0,
+      "signal_flat_guards": 1,
+      "signal_nested_branches": 0,
+      "sloc": 6,
+      "start_column": 1,
+      "start_line": 32
+    },
+    "snapshot/go/alpha.go::Normalize#1": {
+      "cyclomatic": 6,
+      "end_column": 1,
+      "end_line": 29,
+      "high_complexity": false,
+      "identity_ambiguous": false,
+      "mass": 29.393876913398135,
+      "max_nesting": 1,
+      "signal_assertion_like_calls": 0,
+      "signal_field_mappings": 0,
+      "signal_flat_guards": 1,
+      "signal_nested_branches": 0,
+      "sloc": 24,
+      "start_column": 1,
+      "start_line": 6
+    },
+    "snapshot/go/alpha_test.go::TestNormalizeRange#1": {
+      "cyclomatic": 5,
+      "end_column": 1,
+      "end_line": 23,
+      "high_complexity": false,
+      "identity_ambiguous": false,
+      "mass": 20.615528128088304,
+      "max_nesting": 2,
+      "signal_assertion_like_calls": 3,
+      "signal_field_mappings": 0,
+      "signal_flat_guards": 0,
+      "signal_nested_branches": 3,
+      "sloc": 17,
+      "start_column": 1,
+      "start_line": 7
+    },
+    "snapshot/go/beta.go::Normalize#1": {
+      "cyclomatic": 6,
+      "end_column": 1,
+      "end_line": 36,
+      "high_complexity": false,
+      "identity_ambiguous": false,
+      "mass": 29.393876913398135,
+      "max_nesting": 1,
+      "signal_assertion_like_calls": 0,
+      "signal_field_mappings": 0,
+      "signal_flat_guards": 1,
+      "signal_nested_branches": 0,
+      "sloc": 24,
+      "start_column": 1,
+      "start_line": 9
+    },
+    "snapshot/go/beta_test.go::TestNormalizeRange#1": {
+      "cyclomatic": 5,
+      "end_column": 1,
+      "end_line": 23,
+      "high_complexity": false,
+      "identity_ambiguous": false,
+      "mass": 20.615528128088304,
+      "max_nesting": 2,
+      "signal_assertion_like_calls": 3,
+      "signal_field_mappings": 0,
+      "signal_flat_guards": 0,
+      "signal_nested_branches": 3,
+      "sloc": 17,
+      "start_column": 1,
+      "start_line": 7
+    },
+    "snapshot/go/beta_test.go::TestShout#1": {
+      "cyclomatic": 2,
+      "end_column": 1,
+      "end_line": 29,
+      "high_complexity": false,
+      "identity_ambiguous": false,
+      "mass": 4.47213595499958,
+      "max_nesting": 1,
+      "signal_assertion_like_calls": 1,
+      "signal_field_mappings": 0,
+      "signal_flat_guards": 0,
+      "signal_nested_branches": 0,
+      "sloc": 5,
+      "start_column": 1,
+      "start_line": 25
+    },
+    "snapshot/ts/one.ts::load#1": {
+      "cyclomatic": 1,
+      "end_column": 1,
+      "end_line": 30,
+      "high_complexity": false,
+      "identity_ambiguous": false,
+      "mass": 1.7320508075688772,
+      "max_nesting": 0,
+      "signal_assertion_like_calls": 0,
+      "signal_field_mappings": 0,
+      "signal_flat_guards": 0,
+      "signal_nested_branches": 0,
+      "sloc": 3,
+      "start_column": 8,
+      "start_line": 28
+    },
+    "snapshot/ts/one.ts::summarize#1": {
+      "cyclomatic": 5,
+      "end_column": 1,
+      "end_line": 26,
+      "high_complexity": false,
+      "identity_ambiguous": false,
+      "mass": 20.615528128088304,
+      "max_nesting": 3,
+      "signal_assertion_like_calls": 0,
+      "signal_field_mappings": 0,
+      "signal_flat_guards": 0,
+      "signal_nested_branches": 2,
+      "sloc": 17,
+      "start_column": 8,
+      "start_line": 10
+    },
+    "snapshot/ts/two.ts::Report.constructor#1": {
+      "cyclomatic": 1,
+      "end_column": 48,
+      "end_line": 2,
+      "high_complexity": false,
+      "identity_ambiguous": false,
+      "mass": 1,
+      "max_nesting": 0,
+      "signal_assertion_like_calls": 0,
+      "signal_field_mappings": 0,
+      "signal_flat_guards": 0,
+      "signal_nested_branches": 0,
+      "sloc": 1,
+      "start_column": 3,
+      "start_line": 2
+    },
+    "snapshot/ts/two.ts::Report.describe#1": {
+      "cyclomatic": 1,
+      "end_column": 3,
+      "end_line": 6,
+      "high_complexity": false,
+      "identity_ambiguous": false,
+      "mass": 1.7320508075688772,
+      "max_nesting": 0,
+      "signal_assertion_like_calls": 0,
+      "signal_field_mappings": 0,
+      "signal_flat_guards": 0,
+      "signal_nested_branches": 0,
+      "sloc": 3,
+      "start_column": 3,
+      "start_line": 4
+    },
+    "snapshot/ts/two.ts::summarize#1": {
+      "cyclomatic": 5,
+      "end_column": 1,
+      "end_line": 25,
+      "high_complexity": false,
+      "identity_ambiguous": false,
+      "mass": 20.615528128088304,
+      "max_nesting": 3,
+      "signal_assertion_like_calls": 0,
+      "signal_field_mappings": 0,
+      "signal_flat_guards": 0,
+      "signal_nested_branches": 2,
+      "sloc": 17,
+      "start_column": 8,
+      "start_line": 9
+    }
+  },
+  "metrics": {
+    "all#1": {
+      "code_lines": 154,
+      "cyclomatic": 39,
+      "functions": 11,
+      "high_complexity_functions": 0,
+      "high_complexity_mass": 0,
+      "high_complexity_mass_share": 0,
+      "mass": 155.08508339485314,
+      "max_nesting": 3
+    },
+    "production#1": {
+      "code_lines": 111,
+      "cyclomatic": 27,
+      "functions": 8,
+      "high_complexity_functions": 0,
+      "high_complexity_mass": 0,
+      "high_complexity_mass_share": 0,
+      "mass": 109.38189118367698,
+      "max_nesting": 3
+    },
+    "test#1": {
+      "code_lines": 43,
+      "cyclomatic": 12,
+      "functions": 3,
+      "high_complexity_functions": 0,
+      "high_complexity_mass": 0,
+      "high_complexity_mass_share": 0,
+      "mass": 45.70319221117619,
+      "max_nesting": 2
+    }
+  }
+}

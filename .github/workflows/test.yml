@@ -26,23 +26,6 @@ jobs:
         with:
           filters: |
             {
-              "go": [
-                ".github/workflows/**",
-                ".github/actions/**",
-                "go.mod",
-                "go.sum",
-                "go.work",
-                "go.work.sum",
-                "**/*.go",
-                "cmd/**",
-                "internal/**",
-                "pkg/**",
-                "testdata/**",
-                "fixtures/**",
-                ".golangci*",
-                "Taskfile*",
-                "Makefile"
-              ],
               "action": [
                 ".github/workflows/**",
                 ".github/actions/**",
@@ -59,23 +42,6 @@ jobs:
               ],
               "typescript": [
                 ".github/workflows/**",
-                ".github/actions/**",
-                "go.mod",
-                "go.sum",
-                "go.work",
-                "go.work.sum",
-                "**/*.go",
-                "cmd/**",
-                "internal/**",
-                "pkg/**",
-                "testdata/**",
-                "fixtures/**",
-                ".golangci*",
-                "Taskfile*",
-                "Makefile"
-              ],
-              "rustTypescript": [
-                ".github/workflows/**",
                 "Cargo.toml",
                 "Cargo.lock",
                 "rust-toolchain.toml",
@@ -84,40 +50,6 @@ jobs:
                 "third_party/tree-sitter-typescript/**"
               ]
             }
-
-  go-static-analysis:
-    name: Go / Static analysis
-    needs: deburr-paths
-    if: ${{ !cancelled() && (needs.deburr-paths.result != 'success' || fromJSON(needs.deburr-paths.outputs.changes).go) }}
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          persist-credentials: false
-      - uses: kellen-miller/ci/.github/actions/go-lint@2af77688327c2fc0f164e91f77e8784ef25e14c6
-        with:
-          go-version-file: go.mod
-          govulncheck-version: v1.9.0
-
-  go-package-tests:
-    name: Go (${{ matrix.os }})
-    needs: deburr-paths
-    if: ${{ !cancelled() && (needs.deburr-paths.result != 'success' || fromJSON(needs.deburr-paths.outputs.changes).go) }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os:
-          - ubuntu-latest
-          - macos-latest
-          - windows-latest
-    uses: kellen-miller/ci/.github/workflows/go-test.yaml@c188397b9147dbf21030cf2f3e4fc41bff37358b
-    with:
-      check-name: Package tests
-      runner: ${{ matrix.os }}
-      go-version-file: go.mod
-      race: false
-      vet: true
-      build-target: ./cmd/deburr
 
   install-script-tests:
     name: Install script (${{ matrix.os }})
@@ -244,39 +176,6 @@ jobs:
     name: TypeScript integration tests (VS Code)
     needs: deburr-paths
     if: ${{ !cancelled() && (needs.deburr-paths.result != 'success' || fromJSON(needs.deburr-paths.outputs.changes).typescript) }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - name: Check out
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          persist-credentials: false
-
-      - name: Set up Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
-        with:
-          go-version-file: go.mod
-          cache: false
-
-      - name: Check out pinned VS Code sources
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          persist-credentials: false
-          repository: microsoft/vscode
-          ref: bd64649be19f2da0f09c2ab84c066c6c764b83be
-          path: .integration/vscode
-          sparse-checkout: src
-
-      - name: Audit real TypeScript without CGO
-        env:
-          CGO_ENABLED: 0
-          DEBURR_VSCODE_SRC: ${{ github.workspace }}/.integration/vscode/src
-        run: go test -v ./internal/analysis -run '^TestVSCodeTypeScriptIntegration$' -count=1 -timeout=15m
-
-  rust-typescript-integration-tests:
-    name: TypeScript integration tests (VS Code, Rust)
-    needs: deburr-paths
-    if: ${{ !cancelled() && (needs.deburr-paths.result != 'success' || fromJSON(needs.deburr-paths.outputs.changes).rustTypescript) }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:

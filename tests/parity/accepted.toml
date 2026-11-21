@@ -131,6 +131,14 @@ key = "syntax-coverage/broken.ts#1"
 field = "code_lines"
 reason = "TypeScript parse-error file: Go reports 0 code lines, Rust counts recovered tokens"
 
+# The same file when `tests/corpus` itself is a parity root.
+
+[[accepted]]
+section = "files"
+key = "ts/syntax-coverage/broken.ts#1"
+field = "code_lines"
+reason = "TypeScript parse-error file: Go reports 0 code lines, Rust counts recovered tokens"
+
 # The same file when this repository itself is a parity root.
 
 [[accepted]]
