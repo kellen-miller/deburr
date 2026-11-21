@@ -110,7 +110,9 @@ deburr render /tmp/deburr.json --format markdown
 ```
 
 `--source DIR` names the tree the report was taken from, for source snippets
-and links. `compare` and `review apply` accept `--source` too.
+and links. `compare` and `review apply` accept `--source` too. deburr uses it
+only when the directory is a clean Git checkout at the report's commit; otherwise
+the output shows locations only and says why on stderr.
 
 ### Baselines and versions
 
