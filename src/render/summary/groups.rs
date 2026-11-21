@@ -316,16 +316,26 @@ pub(super) fn group_clones<'a>(
                 clones[0].category
             };
 
-            Group {
-                category,
-                regions: regions
-                    .into_iter()
-                    .map(|(path, start, end)| Location {
+            // Clone endpoints in one file often overlap (a block copied three
+            // times yields pairs whose regions share lines), so overlapping
+            // regions read as one place.
+            let mut places: Vec<Location> = Vec::with_capacity(regions.len());
+            for (path, start, end) in regions {
+                match places.last_mut() {
+                    Some(place) if place.path == path && start.line <= place.end.line => {
+                        place.end = place.end.max(end);
+                    }
+                    _ => places.push(Location {
                         path: path.to_owned(),
                         start,
                         end,
-                    })
-                    .collect(),
+                    }),
+                }
+            }
+
+            Group {
+                category,
+                regions: places,
                 clones,
                 members,
                 copied_lines,

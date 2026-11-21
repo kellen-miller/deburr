@@ -100,6 +100,51 @@ fn closures_inside_a_listed_function_do_not_own_the_clone() {
 }
 
 #[test]
+fn overlapping_regions_in_one_file_read_as_one_place() {
+    let mut report = base_report();
+    report.functions = vec![
+        function("a.go", "First", 10, 30, 3),
+        function("a.go", "Second", 50, 30, 3),
+    ];
+    let first = Region {
+        path: "a.go",
+        start: 12,
+        end: 20,
+        functions: &["pkg/a.go::First"],
+    };
+    let first_longer = Region {
+        path: "a.go",
+        start: 12,
+        end: 26,
+        functions: &["pkg/a.go::First"],
+    };
+    let second = || Region {
+        path: "a.go",
+        start: 52,
+        end: 66,
+        functions: &["pkg/a.go::Second"],
+    };
+    report.duplication.clones = vec![
+        clone("c1", Category::Production, [first, second()]),
+        clone("c2", Category::Production, [first_longer, second()]),
+    ];
+    let summary = summarize(&report, "repo");
+    let copied = summary
+        .worklist
+        .iter()
+        .find(|entry| entry.kind == WorkKind::Copied)
+        .expect("copied item");
+
+    let places: Vec<(u32, u32)> = copied
+        .locations
+        .iter()
+        .map(|place| (place.start.line, place.end.line))
+        .collect();
+    assert_eq!(places, [(12, 26), (52, 66)]);
+    assert!(copied.why.contains("across 2 places"), "{}", copied.why);
+}
+
+#[test]
 fn repeated_blocks_in_one_function_and_file_level_clones_get_their_own_titles() {
     let mut report = base_report();
     report.functions = vec![function("a.go", "Table", 1, 90, 3)];
