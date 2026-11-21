@@ -1,9 +1,10 @@
 //! Every digest and ID scheme lives here, so changing a scheme edits one file.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use sha2::{Digest, Sha256};
 
+use crate::report::{Category, Position};
 use crate::syntax::{Syntax, Token};
 
 /// `sha256:<hex>` of `data`.
@@ -59,18 +60,229 @@ pub fn token_fingerprint(syntax: &Syntax, tokens: &[Token]) -> String {
     format!("sha256:{}", hex::encode(hasher.finalize()))
 }
 
+/// The text of one token: its source bytes, or `;` for a synthetic
+/// statement terminator.
+#[must_use]
+pub fn token_text<'a>(source: &'a [u8], token: &Token) -> &'a [u8] {
+    if token.is_terminator() {
+        b";"
+    } else {
+        &source[token.bytes.clone()]
+    }
+}
+
 /// The text of `tokens`, each followed by a zero byte: the content that
-/// finding IDs, fingerprints, and branch equality are computed from.
+/// finding IDs, fingerprints, branch equality, and clone identity are
+/// computed from.
 #[must_use]
 pub fn token_content(syntax: &Syntax, tokens: &[Token]) -> Vec<u8> {
+    region_content(&syntax.source, tokens)
+}
+
+/// [`token_content`] for tokens of a file whose [`Syntax`] is no longer held.
+#[must_use]
+pub fn region_content(source: &[u8], tokens: &[Token]) -> Vec<u8> {
     let mut content = Vec::new();
 
     for token in tokens {
-        content.extend_from_slice(syntax.token_text(token));
+        content.extend_from_slice(token_text(source, token));
         content.push(0);
     }
 
     content
+}
+
+/// One side of a clone pair, as identity sees it.
+#[derive(Debug, Clone, Copy)]
+pub struct CloneEndpointSketch<'a> {
+    pub path: &'a str,
+    /// The ID of the innermost function that holds the whole region, or
+    /// `file` when none does.
+    pub scope: &'a str,
+    pub scope_ambiguous: bool,
+    /// [`region_content`] of the region.
+    pub content: &'a [u8],
+    pub start: Position,
+    pub end: Position,
+}
+
+/// The identity of one clone pair.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CloneIdentity {
+    pub id: String,
+    pub family_id: String,
+    pub fingerprint: String,
+    /// The pair cannot be told from another pair of equal content.
+    pub ambiguous: bool,
+    /// Index (0 or 1) of the endpoint that is listed first.
+    pub first: usize,
+}
+
+/// An endpoint's place in the sorted set of every endpoint in a category.
+/// Field order is the sort order, which fixes occurrence numbers.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct EndpointKey<'a> {
+    digest: String,
+    path: &'a str,
+    start: Position,
+    end: Position,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct EndpointIdentity {
+    /// `<content digest>#<occurrence>`.
+    name: String,
+    ambiguous: bool,
+}
+
+/// Assigns identities to the clone pairs of one category.
+///
+/// An endpoint is identified by what it contains and where it lives (path
+/// and scope), not by its line numbers, so a clone keeps its ID when code
+/// above it moves. Endpoints of equal content are numbered in position order
+/// and are ambiguous, since only their order tells them apart. A family is
+/// every pair connected through shared endpoints; its ID follows its member
+/// endpoints.
+#[must_use]
+pub fn assign_clone_identities(
+    category: Category,
+    pairs: &[[CloneEndpointSketch<'_>; 2]],
+) -> Vec<CloneIdentity> {
+    let category = category.as_str().as_bytes();
+    let keys: Vec<[EndpointKey<'_>; 2]> = pairs
+        .iter()
+        .map(|pair| {
+            pair.map(|sketch| EndpointKey {
+                digest: joined_digest(&[
+                    b"clone-endpoint",
+                    sketch.path.as_bytes(),
+                    sketch.scope.as_bytes(),
+                    sketch.content,
+                ]),
+                path: sketch.path,
+                start: sketch.start,
+                end: sketch.end,
+            })
+        })
+        .collect();
+
+    let mut scoped: BTreeMap<&EndpointKey<'_>, bool> = BTreeMap::new();
+
+    for (pair, pair_keys) in pairs.iter().zip(&keys) {
+        for (sketch, key) in pair.iter().zip(pair_keys) {
+            scoped.insert(key, sketch.scope_ambiguous);
+        }
+    }
+
+    let mut per_digest: HashMap<&str, usize> = HashMap::new();
+
+    for key in scoped.keys() {
+        *per_digest.entry(&key.digest).or_default() += 1;
+    }
+
+    let mut occurrences: HashMap<&str, usize> = HashMap::new();
+    let mut endpoints: BTreeMap<&EndpointKey<'_>, EndpointIdentity> = BTreeMap::new();
+
+    for (&key, &scope_ambiguous) in &scoped {
+        let occurrence = occurrences.entry(&key.digest).or_default();
+        *occurrence += 1;
+
+        endpoints.insert(
+            key,
+            EndpointIdentity {
+                name: format!("{}#{}", key.digest, *occurrence),
+                ambiguous: scope_ambiguous
+                    || per_digest
+                        .get(key.digest.as_str())
+                        .is_some_and(|&count| count > 1),
+            },
+        );
+    }
+
+    // A family is a connected set of endpoints; union-find over the sorted
+    // endpoint order.
+    let slots: BTreeMap<&EndpointKey<'_>, usize> = endpoints
+        .keys()
+        .enumerate()
+        .map(|(slot, &key)| (key, slot))
+        .collect();
+    let mut parent: Vec<usize> = (0..slots.len()).collect();
+
+    for pair_keys in &keys {
+        let left = family_root(&mut parent, slots[&pair_keys[0]]);
+        let right = family_root(&mut parent, slots[&pair_keys[1]]);
+
+        parent[left] = right;
+    }
+
+    let mut members: BTreeMap<usize, BTreeSet<&str>> = BTreeMap::new();
+
+    for (&key, endpoint) in &endpoints {
+        members
+            .entry(family_root(&mut parent, slots[key]))
+            .or_default()
+            .insert(&endpoint.name);
+    }
+
+    let family_ids: HashMap<usize, String> = members
+        .iter()
+        .map(|(&family, names)| {
+            let mut parts: Vec<&[u8]> = vec![b"clone-family", category];
+            parts.extend(names.iter().map(|name| name.as_bytes()));
+
+            (family, format!("family-{}", &joined_digest(&parts)[..16]))
+        })
+        .collect();
+
+    keys.iter()
+        .map(|pair_keys| {
+            let sides = pair_keys.each_ref().map(|key| &endpoints[key]);
+            let first = usize::from(sides[0].name > sides[1].name);
+            let mut digests = pair_keys.each_ref().map(|key| key.digest.as_bytes());
+
+            digests.sort_unstable();
+
+            let id = joined_digest(&[
+                b"clone",
+                category,
+                sides[first].name.as_bytes(),
+                sides[1 - first].name.as_bytes(),
+            ]);
+
+            CloneIdentity {
+                id: format!("clone-{}", &id[..16]),
+                family_id: family_ids[&family_root(&mut parent, slots[&pair_keys[0]])].clone(),
+                fingerprint: joined_digest(&[b"clone-pair", category, digests[0], digests[1]]),
+                ambiguous: sides.iter().any(|side| side.ambiguous),
+                first,
+            }
+        })
+        .collect()
+}
+
+/// The representative of `index`'s set, flattening the path as it goes.
+fn family_root(parent: &mut [usize], mut index: usize) -> usize {
+    while parent[index] != index {
+        parent[index] = parent[parent[index]];
+        index = parent[index];
+    }
+
+    index
+}
+
+/// Hex SHA-256 of `parts` separated by zero bytes.
+fn joined_digest(parts: &[&[u8]]) -> String {
+    let mut hasher = Sha256::new();
+
+    for (index, part) in parts.iter().enumerate() {
+        if index > 0 {
+            hasher.update([0]);
+        }
+
+        hasher.update(part);
+    }
+
+    hex::encode(hasher.finalize())
 }
 
 /// What a finding's identity is derived from.
@@ -263,10 +475,11 @@ pub fn assign_lexical_identities(units: &[UnitSketch<'_>]) -> Vec<UnitIdentity> 
 #[cfg(test)]
 mod tests {
     use super::{
-        FindingSketch, ManifestEntry, UnitSketch, assign_lexical_identities,
-        assign_unit_identities, finding_fingerprint, finding_id, function_id, manifest_digest,
-        sha256_prefixed,
+        CloneEndpointSketch, FindingSketch, ManifestEntry, UnitSketch, assign_clone_identities,
+        assign_lexical_identities, assign_unit_identities, finding_fingerprint, finding_id,
+        function_id, manifest_digest, sha256_prefixed,
     };
+    use crate::report::{Category, Position};
 
     fn sketch<'a>(
         name: &'a str,
@@ -415,6 +628,92 @@ mod tests {
         assert_ne!(finding_id(&base), finding_id(&other_content));
         assert_ne!(finding_id(&base), finding_id(&second));
         assert_eq!(finding_fingerprint(&base), finding_fingerprint(&second));
+    }
+
+    fn endpoint<'a>(path: &'a str, content: &'a [u8], line: u32) -> CloneEndpointSketch<'a> {
+        CloneEndpointSketch {
+            path,
+            scope: "file",
+            scope_ambiguous: false,
+            content,
+            start: Position { line, column: 1 },
+            end: Position {
+                line: line + 9,
+                column: 1,
+            },
+        }
+    }
+
+    #[test]
+    fn clone_ids_follow_content_and_not_line_numbers() {
+        let here = assign_clone_identities(
+            Category::Production,
+            &[[endpoint("a.go", b"x\0", 3), endpoint("b.go", b"x\0", 5)]],
+        );
+        let moved = assign_clone_identities(
+            Category::Production,
+            &[[endpoint("a.go", b"x\0", 30), endpoint("b.go", b"x\0", 50)]],
+        );
+        let edited = assign_clone_identities(
+            Category::Production,
+            &[[endpoint("a.go", b"x\0", 3), endpoint("b.go", b"y\0", 5)]],
+        );
+        let tests = assign_clone_identities(
+            Category::Test,
+            &[[endpoint("a.go", b"x\0", 3), endpoint("b.go", b"x\0", 5)]],
+        );
+
+        assert_eq!(here, moved);
+        assert!(!here[0].ambiguous);
+        assert!(here[0].id.starts_with("clone-") && here[0].family_id.starts_with("family-"));
+        assert_ne!(here[0].id, edited[0].id);
+        assert_ne!(here[0].fingerprint, edited[0].fingerprint);
+        assert_ne!(here[0].id, tests[0].id);
+        assert_ne!(here[0].family_id, tests[0].family_id);
+    }
+
+    #[test]
+    fn the_first_endpoint_does_not_depend_on_pair_order() {
+        let forward = assign_clone_identities(
+            Category::Production,
+            &[[endpoint("a.go", b"x\0", 3), endpoint("b.go", b"x\0", 5)]],
+        );
+        let backward = assign_clone_identities(
+            Category::Production,
+            &[[endpoint("b.go", b"x\0", 5), endpoint("a.go", b"x\0", 3)]],
+        );
+
+        assert_eq!(forward[0].id, backward[0].id);
+        assert_eq!(forward[0].fingerprint, backward[0].fingerprint);
+        assert_ne!(forward[0].first, backward[0].first);
+    }
+
+    #[test]
+    fn copies_of_one_region_in_one_place_are_ambiguous_and_share_a_family() {
+        let pairs = [
+            [endpoint("f.go", b"x\0", 1), endpoint("f.go", b"x\0", 20)],
+            [endpoint("f.go", b"x\0", 1), endpoint("f.go", b"x\0", 40)],
+            [endpoint("g.go", b"y\0", 1), endpoint("h.go", b"y\0", 1)],
+        ];
+        let identities = assign_clone_identities(Category::Production, &pairs);
+
+        assert!(identities[0].ambiguous && identities[1].ambiguous);
+        assert!(!identities[2].ambiguous);
+        assert_eq!(identities[0].family_id, identities[1].family_id);
+        assert_ne!(identities[0].family_id, identities[2].family_id);
+        assert_ne!(identities[0].id, identities[1].id);
+    }
+
+    #[test]
+    fn an_ambiguous_scope_makes_the_clone_ambiguous() {
+        let mut left = endpoint("a.go", b"x\0", 3);
+        left.scope = "pkg/a.go::init";
+        left.scope_ambiguous = true;
+
+        let identities =
+            assign_clone_identities(Category::Production, &[[left, endpoint("b.go", b"x\0", 5)]]);
+
+        assert!(identities[0].ambiguous);
     }
 
     #[test]

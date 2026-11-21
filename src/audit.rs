@@ -7,7 +7,7 @@ use rayon::prelude::*;
 
 use crate::analysis;
 use crate::discover::{self, DiscoveredFile, Discovery};
-use crate::duplication::DuplicationSettings;
+use crate::duplication::{self, AnalyzedFile, DuplicationError, DuplicationSettings};
 use crate::identity::{self, ManifestEntry};
 use crate::provenance;
 use crate::report::{
@@ -17,7 +17,7 @@ use crate::report::{
     MetricBucket, Metrics, Provenance, Report, RuleConfig, SCHEMA_VERSION, Scope, SourceProvenance,
 };
 use crate::review;
-use crate::syntax;
+use crate::syntax::{self, Language, Token};
 
 /// What an audit includes.
 #[derive(Debug, Clone)]
@@ -38,6 +38,8 @@ pub enum AuditError {
     File { path: String, message: String },
     #[error("{0}")]
     Input(String),
+    #[error("duplication: {0}")]
+    Duplication(String),
 }
 
 /// An audit always yields a report; non-empty `errors` means exit 1.
@@ -54,6 +56,11 @@ struct FileOutcome {
     source: Vec<u8>,
     functions: Vec<Function>,
     findings: Vec<Finding>,
+    /// What clone detection needs, kept only for analyzed production and test
+    /// files when duplication is requested (the syntax tree is dropped).
+    language: Option<Language>,
+    tokens: Vec<Token>,
+    code_lines: Vec<bool>,
 }
 
 /// Audits the tree at `root`: discovers files, parses and analyzes them in
@@ -76,8 +83,12 @@ pub fn audit(root: &Path, options: &AuditOptions, progress: &mut dyn Write) -> A
     let symlinks = discovery.symlinks;
     let excluded_directories = discovery.excluded_directories;
 
-    let mut outcomes: Vec<FileOutcome> =
-        discovery.files.into_par_iter().map(analyze_file).collect();
+    let keep_tokens = options.duplication.is_some();
+    let mut outcomes: Vec<FileOutcome> = discovery
+        .files
+        .into_par_iter()
+        .map(|file| analyze_file(file, keep_tokens))
+        .collect();
     outcomes.sort_by(|left, right| left.file.path.cmp(&right.file.path));
 
     // Coverage and progress are tallied in path order after the parallel
@@ -150,6 +161,17 @@ pub fn audit(root: &Path, options: &AuditOptions, progress: &mut dyn Write) -> A
             outcomes.len()
         ),
     );
+
+    if let Some(settings) = &options.duplication {
+        say(progress, "detecting clones");
+
+        if let Err(error) = measure_duplication(&outcomes, settings, &mut report.duplication) {
+            report.duplication.status = DuplicationStatus::Error;
+            report.duplication.error = error.to_string();
+            errors.push(AuditError::Duplication(error.to_string()));
+        }
+    }
+
     say(progress, "summarizing metrics");
 
     report.coverage = Coverage {
@@ -235,7 +257,7 @@ pub fn audit(root: &Path, options: &AuditOptions, progress: &mut dyn Write) -> A
 /// Every file that was read is tokenized for line counts, including files
 /// excluded by category flags and files with syntax errors; only files whose
 /// status is still `analyzed` and that parse cleanly are analyzed further.
-fn analyze_file(discovered: DiscoveredFile) -> FileOutcome {
+fn analyze_file(discovered: DiscoveredFile, keep_tokens: bool) -> FileOutcome {
     let mut outcome = FileOutcome {
         file: File {
             path: discovered.path,
@@ -250,6 +272,9 @@ fn analyze_file(discovered: DiscoveredFile) -> FileOutcome {
         source: Vec::new(),
         functions: Vec::new(),
         findings: Vec::new(),
+        language: None,
+        tokens: Vec::new(),
+        code_lines: Vec::new(),
     };
 
     let (Some(language), Some(source)) = (discovered.language, discovered.source) else {
@@ -257,6 +282,7 @@ fn analyze_file(discovered: DiscoveredFile) -> FileOutcome {
     };
 
     let analyzable = outcome.file.status == FileStatus::Analyzed;
+    outcome.language = Some(language);
     outcome.file.lines = u32::try_from(syntax::line_count(&source)).unwrap_or(u32::MAX);
 
     let (recovered, syntax_error) = match syntax::parse(language, source) {
@@ -273,9 +299,11 @@ fn analyze_file(discovered: DiscoveredFile) -> FileOutcome {
         outcome.file.error.clone_from(message);
     }
 
+    let mut retain = false;
     let code_lines = match recovered {
         Ok(parsed) => {
-            let code_lines = if analyzable && syntax_error.is_none() {
+            let clean = analyzable && syntax_error.is_none();
+            let code_lines = if clean {
                 let analysis =
                     analysis::analyze(&outcome.file.path, outcome.file.category, &parsed);
                 outcome.functions = analysis.functions;
@@ -285,6 +313,14 @@ fn analyze_file(discovered: DiscoveredFile) -> FileOutcome {
             } else {
                 parsed.code_lines()
             };
+
+            retain = clean
+                && keep_tokens
+                && matches!(outcome.file.category, Category::Production | Category::Test);
+
+            if retain {
+                outcome.tokens = parsed.tokens;
+            }
 
             outcome.source = parsed.source;
 
@@ -300,7 +336,53 @@ fn analyze_file(discovered: DiscoveredFile) -> FileOutcome {
     outcome.file.code_lines =
         u32::try_from(code_lines.iter().filter(|&&code| code).count()).unwrap_or(u32::MAX);
 
+    if retain {
+        outcome.code_lines = code_lines;
+    }
+
     outcome
+}
+
+/// Detects clones separately in the analyzed production files and the
+/// analyzed test files, so a clone never pairs production code with test
+/// code and each category gets its own percentage.
+fn measure_duplication(
+    outcomes: &[FileOutcome],
+    settings: &DuplicationSettings,
+    duplication: &mut Duplication,
+) -> Result<(), DuplicationError> {
+    let mut categories = Vec::new();
+    let mut clones = Vec::new();
+
+    for category in [Category::Production, Category::Test] {
+        let files: Vec<AnalyzedFile<'_>> = outcomes
+            .iter()
+            .filter(|outcome| {
+                outcome.file.category == category && outcome.file.status == FileStatus::Analyzed
+            })
+            .filter_map(|outcome| {
+                Some(AnalyzedFile {
+                    path: &outcome.file.path,
+                    language: outcome.language?,
+                    source: &outcome.source,
+                    tokens: &outcome.tokens,
+                    code_lines: &outcome.code_lines,
+                    functions: &outcome.functions,
+                })
+            })
+            .collect();
+        let measured = duplication::detect(&files, category, settings)?;
+
+        categories.push(measured.measurement);
+        clones.extend(measured.clones);
+    }
+
+    clones.sort_by(|left, right| left.id.cmp(&right.id));
+    duplication.status = DuplicationStatus::Measured;
+    duplication.categories = categories;
+    duplication.clones = clones;
+
+    Ok(())
 }
 
 /// Code lines of analyzed files and function totals per bucket. Sums follow
