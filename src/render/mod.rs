@@ -22,6 +22,7 @@ use crate::review;
 
 pub mod github;
 pub mod html;
+pub mod markdown;
 pub mod source;
 pub mod summary;
 pub mod text;
@@ -81,8 +82,8 @@ pub fn render_report(
     out: &mut dyn Write,
 ) -> io::Result<()> {
     match format {
-        // Markdown renders as text until its own renderer lands.
-        Format::Text | Format::Markdown => text::report(report, source, style, out),
+        Format::Text => text::report(report, source, style, out),
+        Format::Markdown => markdown::report(report, source, style, out),
         Format::Json => write_json(report, out),
         Format::Html => html::report(report, source, style, out),
         Format::Github => github::report(report, source, style, out),
@@ -102,8 +103,8 @@ pub fn render_comparison(
     out: &mut dyn Write,
 ) -> io::Result<()> {
     match format {
-        // Markdown renders as text until its own renderer lands.
-        Format::Text | Format::Markdown => text::comparison(comparison, source, style, out),
+        Format::Text => text::comparison(comparison, source, style, out),
+        Format::Markdown => markdown::comparison(comparison, source, style, out),
         Format::Json => write_json(comparison, out),
         Format::Html => html::comparison(comparison, source, style, out),
         Format::Github => github::comparison(comparison, source, style, out),
