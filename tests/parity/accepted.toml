@@ -9,6 +9,9 @@
 #     zero; Rust counts every file it read)
 #   - duplicate-branch findings that differ only because the Go version
 #     compared printed layout or because terminators now separate statements
+#   - TypeScript names or ranges where the Go version's pure-Go tree builder
+#     (gotreesitter) is wrong and the official grammar is right (see the VS
+#     Code block below)
 #
 # Every entry must also be recorded in the ExecPlan's Surprises & Discoveries.
 
@@ -118,3 +121,238 @@ section = "files"
 key = "_vendor/protobuf-33.2/build/third_party/utf8_range/CMakeFiles/utf8_validity.dir/compiler_depend.ts#1"
 field = "code_lines"
 reason = "TypeScript parse-error file: Go reports 0 code lines, Rust counts recovered tokens"
+
+# tests/corpus/ts: `broken.ts` is the one TypeScript file that fails to parse.
+# Go reports 0 code lines for it; Rust counts the tokens it recovered.
+
+[[accepted]]
+section = "files"
+key = "syntax-coverage/broken.ts#1"
+field = "code_lines"
+reason = "TypeScript parse-error file: Go reports 0 code lines, Rust counts recovered tokens"
+
+# The same file when this repository itself is a parity root.
+
+[[accepted]]
+section = "files"
+key = "tests/corpus/ts/syntax-coverage/broken.ts#1"
+field = "code_lines"
+reason = "TypeScript parse-error file: Go reports 0 code lines, Rust counts recovered tokens"
+
+# VS Code `src` (bd64649), a parity root for the full TypeScript projection.
+# Rust measures the same 270,201 functions as the Go baseline and the same 54
+# findings. The only differences are the 34 below, in two classes, both caused
+# by the Go version's pure-Go tree builder (gotreesitter), which the official
+# grammar does not share:
+#
+#   - `async *name()` and `static *name()` generator methods: gotreesitter
+#     gives the `name` field to the modifier, so Go names the function
+#     `Class.async` or `Class.static` and Rust names it `Class.name`. Each such
+#     method is one Go-only entry and one Rust-only entry.
+#   - a method followed by a trailing `// comment` on its closing line:
+#     gotreesitter extends the method's range over the comment, so Go's end
+#     column is past the comment; Rust ends it at the closing brace.
+
+[[accepted]]
+section = "functions"
+key = "vs/base/common/tfIdf.ts::TfIdfCalculator.splitTerms#1"
+field = "<entry>"
+reason = "gotreesitter names an `async *name()` or `static *name()` generator method by its modifier (`async`, `static`); the official grammar names it correctly"
+
+[[accepted]]
+section = "functions"
+key = "vs/base/common/tfIdf.ts::TfIdfCalculator.splitTerms.normalize#1"
+field = "<entry>"
+reason = "gotreesitter names an `async *name()` or `static *name()` generator method by its modifier (`async`, `static`); the official grammar names it correctly"
+
+[[accepted]]
+section = "functions"
+key = "vs/base/common/tfIdf.ts::TfIdfCalculator.static#1"
+field = "<entry>"
+reason = "gotreesitter names an `async *name()` or `static *name()` generator method by its modifier (`async`, `static`); the official grammar names it correctly"
+
+[[accepted]]
+section = "functions"
+key = "vs/base/common/tfIdf.ts::TfIdfCalculator.static.normalize#1"
+field = "<entry>"
+reason = "gotreesitter names an `async *name()` or `static *name()` generator method by its modifier (`async`, `static`); the official grammar names it correctly"
+
+[[accepted]]
+section = "functions"
+key = "vs/base/node/pfs.ts::close#1"
+field = "end_column"
+reason = "gotreesitter ends a method's range after its trailing line comment; the patched official grammar ends it at the closing brace"
+
+[[accepted]]
+section = "functions"
+key = "vs/base/node/pfs.ts::fdatasync#1"
+field = "end_column"
+reason = "gotreesitter ends a method's range after its trailing line comment; the patched official grammar ends it at the closing brace"
+
+[[accepted]]
+section = "functions"
+key = "vs/base/node/pfs.ts::fstat#1"
+field = "end_column"
+reason = "gotreesitter ends a method's range after its trailing line comment; the patched official grammar ends it at the closing brace"
+
+[[accepted]]
+section = "functions"
+key = "vs/base/node/pfs.ts::ftruncate#1"
+field = "end_column"
+reason = "gotreesitter ends a method's range after its trailing line comment; the patched official grammar ends it at the closing brace"
+
+[[accepted]]
+section = "functions"
+key = "vs/base/node/pfs.ts::open#1"
+field = "end_column"
+reason = "gotreesitter ends a method's range after its trailing line comment; the patched official grammar ends it at the closing brace"
+
+[[accepted]]
+section = "functions"
+key = "vs/base/node/pfs.ts::realpath#2"
+field = "end_column"
+reason = "gotreesitter ends a method's range after its trailing line comment; the patched official grammar ends it at the closing brace"
+
+[[accepted]]
+section = "functions"
+key = "vs/base/parts/storage/node/storage.ts::SQLiteStorageDatabase.onDidChangeItemsExternal#1"
+field = "end_column"
+reason = "gotreesitter ends a method's range after its trailing line comment; the patched official grammar ends it at the closing brace"
+
+[[accepted]]
+section = "functions"
+key = "vs/editor/contrib/hover/browser/markdownHoverParticipant.ts::MarkdownHoverParticipant._getMarkdownHovers#1"
+field = "<entry>"
+reason = "gotreesitter names an `async *name()` or `static *name()` generator method by its modifier (`async`, `static`); the official grammar names it correctly"
+
+[[accepted]]
+section = "functions"
+key = "vs/editor/contrib/hover/browser/markdownHoverParticipant.ts::MarkdownHoverParticipant.async#1"
+field = "<entry>"
+reason = "gotreesitter names an `async *name()` or `static *name()` generator method by its modifier (`async`, `static`); the official grammar names it correctly"
+
+[[accepted]]
+section = "functions"
+key = "vs/editor/contrib/inlayHints/browser/inlayHintsHover.ts::InlayHintsHover._resolveInlayHintLabelPartHover#1"
+field = "<entry>"
+reason = "gotreesitter names an `async *name()` or `static *name()` generator method by its modifier (`async`, `static`); the official grammar names it correctly"
+
+[[accepted]]
+section = "functions"
+key = "vs/editor/contrib/inlayHints/browser/inlayHintsHover.ts::InlayHintsHover.async#1"
+field = "<entry>"
+reason = "gotreesitter names an `async *name()` or `static *name()` generator method by its modifier (`async`, `static`); the official grammar names it correctly"
+
+[[accepted]]
+section = "functions"
+key = "vs/platform/agentHost/node/shared/copilotApiService.ts::CopilotApiService._messagesStreaming#1"
+field = "<entry>"
+reason = "gotreesitter names an `async *name()` or `static *name()` generator method by its modifier (`async`, `static`); the official grammar names it correctly"
+
+[[accepted]]
+section = "functions"
+key = "vs/platform/agentHost/node/shared/copilotApiService.ts::CopilotApiService._readSSE#1"
+field = "<entry>"
+reason = "gotreesitter names an `async *name()` or `static *name()` generator method by its modifier (`async`, `static`); the official grammar names it correctly"
+
+[[accepted]]
+section = "functions"
+key = "vs/platform/agentHost/node/shared/copilotApiService.ts::CopilotApiService.async#1"
+field = "<entry>"
+reason = "gotreesitter names an `async *name()` or `static *name()` generator method by its modifier (`async`, `static`); the official grammar names it correctly"
+
+[[accepted]]
+section = "functions"
+key = "vs/platform/agentHost/node/shared/copilotApiService.ts::CopilotApiService.async#2"
+field = "<entry>"
+reason = "gotreesitter names an `async *name()` or `static *name()` generator method by its modifier (`async`, `static`); the official grammar names it correctly"
+
+[[accepted]]
+section = "functions"
+key = "vs/platform/agentHost/test/node/claudeAgent.integrationTest.ts::StubCopilotApiService._stream#1"
+field = "<entry>"
+reason = "gotreesitter names an `async *name()` or `static *name()` generator method by its modifier (`async`, `static`); the official grammar names it correctly"
+
+[[accepted]]
+section = "functions"
+key = "vs/platform/agentHost/test/node/claudeAgent.integrationTest.ts::StubCopilotApiService.async#1"
+field = "<entry>"
+reason = "gotreesitter names an `async *name()` or `static *name()` generator method by its modifier (`async`, `static`); the official grammar names it correctly"
+
+[[accepted]]
+section = "functions"
+key = "vs/platform/agentHost/test/node/claudeProxyService.test.ts::FakeCopilotApiService._streamGen#1"
+field = "<entry>"
+reason = "gotreesitter names an `async *name()` or `static *name()` generator method by its modifier (`async`, `static`); the official grammar names it correctly"
+
+[[accepted]]
+section = "functions"
+key = "vs/platform/agentHost/test/node/claudeProxyService.test.ts::FakeCopilotApiService.async#1"
+field = "<entry>"
+reason = "gotreesitter names an `async *name()` or `static *name()` generator method by its modifier (`async`, `static`); the official grammar names it correctly"
+
+[[accepted]]
+section = "functions"
+key = "vs/platform/telemetry/common/serverTelemetryService.ts::updateInjectedTelemetryLevel#1"
+field = "end_column"
+reason = "gotreesitter ends a method's range after its trailing line comment; the patched official grammar ends it at the closing brace"
+
+[[accepted]]
+section = "functions"
+key = "vs/workbench/api/browser/mainThreadUriOpeners.ts::MainThreadUriOpeners.async#1"
+field = "<entry>"
+reason = "gotreesitter names an `async *name()` or `static *name()` generator method by its modifier (`async`, `static`); the official grammar names it correctly"
+
+[[accepted]]
+section = "functions"
+key = "vs/workbench/api/browser/mainThreadUriOpeners.ts::MainThreadUriOpeners.getOpeners#1"
+field = "<entry>"
+reason = "gotreesitter names an `async *name()` or `static *name()` generator method by its modifier (`async`, `static`); the official grammar names it correctly"
+
+[[accepted]]
+section = "functions"
+key = "vs/workbench/contrib/chat/electron-browser/actions/voiceChatActions.ts::ChatSynthesizerSessions.async#1"
+field = "<entry>"
+reason = "gotreesitter names an `async *name()` or `static *name()` generator method by its modifier (`async`, `static`); the official grammar names it correctly"
+
+[[accepted]]
+section = "functions"
+key = "vs/workbench/contrib/chat/electron-browser/actions/voiceChatActions.ts::ChatSynthesizerSessions.nextChatResponseChunk#1"
+field = "<entry>"
+reason = "gotreesitter names an `async *name()` or `static *name()` generator method by its modifier (`async`, `static`); the official grammar names it correctly"
+
+[[accepted]]
+section = "functions"
+key = "vs/workbench/contrib/mcp/common/mcpServerRequestHandler.ts::McpServerRequestHandler.async#1"
+field = "<entry>"
+reason = "gotreesitter names an `async *name()` or `static *name()` generator method by its modifier (`async`, `static`); the official grammar names it correctly"
+
+[[accepted]]
+section = "functions"
+key = "vs/workbench/contrib/mcp/common/mcpServerRequestHandler.ts::McpServerRequestHandler.sendRequestPaginated#1"
+field = "<entry>"
+reason = "gotreesitter names an `async *name()` or `static *name()` generator method by its modifier (`async`, `static`); the official grammar names it correctly"
+
+[[accepted]]
+section = "functions"
+key = "vs/workbench/services/extensions/test/browser/extensionService.test.ts::anon-*.MyTestExtensionService._resolveExtensions#1"
+field = "<entry>"
+reason = "gotreesitter names an `async *name()` or `static *name()` generator method by its modifier (`async`, `static`); the official grammar names it correctly"
+
+[[accepted]]
+section = "functions"
+key = "vs/workbench/services/extensions/test/browser/extensionService.test.ts::anon-*.MyTestExtensionService.async#1"
+field = "<entry>"
+reason = "gotreesitter names an `async *name()` or `static *name()` generator method by its modifier (`async`, `static`); the official grammar names it correctly"
+
+[[accepted]]
+section = "functions"
+key = "vs/workbench/services/languageDetection/browser/languageDetectionWebWorker.ts::LanguageDetectionWorker.async#1"
+field = "<entry>"
+reason = "gotreesitter names an `async *name()` or `static *name()` generator method by its modifier (`async`, `static`); the official grammar names it correctly"
+
+[[accepted]]
+section = "functions"
+key = "vs/workbench/services/languageDetection/browser/languageDetectionWebWorker.ts::LanguageDetectionWorker.detectLanguagesImpl#1"
+field = "<entry>"
+reason = "gotreesitter names an `async *name()` or `static *name()` generator method by its modifier (`async`, `static`); the official grammar names it correctly"

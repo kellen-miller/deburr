@@ -1,6 +1,6 @@
 //! Turns a parsed file into function units, findings, and a per-line code map.
 //!
-//! The engine is language independent: a [`FunctionRules`] table names the
+//! The engine is language independent: a [`LanguageRules`] table names the
 //! node kinds that matter, plus a few shape functions per language.
 
 use std::collections::HashMap;
@@ -11,7 +11,9 @@ use crate::identity::{self, FindingSketch, UnitSketch};
 use crate::report::{
     Category, Detail, Finding, Function, HIGH_COMPLEXITY_THRESHOLD, Position, StructuralSignals,
 };
-use crate::syntax::{Language, Syntax, Token, go};
+use crate::syntax::{
+    BranchShape, Enclosing, LanguageRules, SignalRules, Syntax, Token, UnitNaming, node_span,
+};
 
 /// Rule ID of an `if` that returns opposite boolean literals.
 pub const REDUNDANT_BOOLEAN_RETURN: &str = "redundant-boolean-return";
@@ -26,91 +28,6 @@ pub struct FileAnalysis {
     pub findings: Vec<Finding>,
     /// Index `n - 1` is true when line `n` holds code.
     pub code_lines: Vec<bool>,
-}
-
-/// What a call expression is called, for assertion matching.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CallTarget {
-    /// The called function's name.
-    pub name: String,
-    /// The identifier a selector call is made on (`assert` in
-    /// `assert.Equal(..)`), when the callee is a plain selector.
-    pub receiver: Option<String>,
-}
-
-/// A language's function-unit rules: plain data plus a few shape functions.
-#[derive(Debug)]
-pub struct FunctionRules {
-    /// Node kinds that are function units when they have a `body`.
-    pub function_kinds: &'static [&'static str],
-    /// Node kinds that each add one decision point.
-    pub decision_kinds: &'static [&'static str],
-    /// Node kinds that deepen nesting inside their subtree.
-    pub nesting_kinds: &'static [&'static str],
-    /// The node kind of a binary expression, whose `operator` field is
-    /// checked against `short_circuit_operators`.
-    pub binary_kind: &'static str,
-    pub short_circuit_operators: &'static [&'static str],
-    /// The declared name of a function node, if it has one.
-    pub declared_name: fn(Node<'_>, &[u8]) -> Option<String>,
-    /// The package (or module) segment of function IDs.
-    pub package_name: fn(Node<'_>, &[u8]) -> String,
-    /// Statement shapes shared by signals and findings.
-    pub statements: StatementRules,
-    pub signals: SignalRules,
-    pub findings: FindingRules,
-}
-
-/// Where statements live in the tree.
-#[derive(Debug)]
-pub struct StatementRules {
-    pub comment_kind: &'static str,
-    /// A braced body; its statements sit in one child of `statement_list_kind`.
-    pub block_kind: &'static str,
-    pub statement_list_kind: &'static str,
-    pub if_kind: &'static str,
-    pub return_kind: &'static str,
-}
-
-/// The shapes behind `flat_guards`, `field_mappings`, and
-/// `assertion_like_calls`.
-#[derive(Debug)]
-pub struct SignalRules {
-    /// Lone statements that make an `if` a guard clause.
-    pub guard_kinds: &'static [&'static str],
-    pub composite_kind: &'static str,
-    /// Composite literal types whose keyed elements count as field mappings.
-    pub composite_type_kinds: &'static [&'static str],
-    pub keyed_element_kind: &'static str,
-    /// The node that wraps a key or value inside a keyed element.
-    pub element_kind: &'static str,
-    pub mapping_key_kinds: &'static [&'static str],
-    pub mapping_value_kinds: &'static [&'static str],
-    pub call_kinds: &'static [&'static str],
-    /// Names and receivers of a call, when `node` is one of `call_kinds`.
-    pub call_target: fn(Node<'_>, &[u8]) -> Option<CallTarget>,
-    /// Lowercase name prefixes that mark an assertion.
-    pub assertion_prefixes: &'static [&'static str],
-    /// Lowercase receivers whose every call is an assertion.
-    pub assertion_receivers: &'static [&'static str],
-    /// Lowercase receivers that are test handles...
-    pub testing_receivers: &'static [&'static str],
-    /// ...and the lowercase methods on them that assert.
-    pub testing_methods: &'static [&'static str],
-}
-
-/// The shapes behind the two findings.
-#[derive(Debug)]
-pub struct FindingRules {
-    /// Function kinds that may own a redundant-boolean-return finding.
-    pub redundant_owner_kinds: &'static [&'static str],
-    /// Whether a function declares exactly one unnamed `bool` result.
-    pub returns_plain_bool: fn(Node<'_>, &[u8]) -> bool,
-    pub true_kind: &'static str,
-    pub false_kind: &'static str,
-    pub comparison_operators: &'static [&'static str],
-    pub redundant_boolean_message: &'static str,
-    pub duplicate_branches_message: &'static str,
 }
 
 /// One discovered function unit and what has been measured so far.
@@ -153,17 +70,7 @@ struct Candidate {
 #[must_use]
 pub fn analyze(path: &str, category: Category, syntax: &Syntax) -> FileAnalysis {
     let code_lines = syntax.code_lines();
-    let rules = match syntax.language {
-        Language::Go => &go::FUNCTIONS,
-        // TypeScript function rules arrive with the TypeScript milestone.
-        Language::TypeScript | Language::Tsx => {
-            return FileAnalysis {
-                code_lines,
-                ..FileAnalysis::default()
-            };
-        }
-    };
-
+    let rules = syntax.language.rules();
     let mut units = discover_units(syntax, rules);
 
     name_units(&mut units, syntax, rules);
@@ -177,7 +84,10 @@ pub fn analyze(path: &str, category: Category, syntax: &Syntax) -> FileAnalysis 
             fingerprint: &unit.fingerprint,
         })
         .collect();
-    let identities = identity::assign_unit_identities(&sketches);
+    let identities = match rules.naming {
+        UnitNaming::Positional { .. } => identity::assign_unit_identities(&sketches),
+        UnitNaming::Lexical { .. } => identity::assign_lexical_identities(&sketches),
+    };
 
     assign_sloc(&mut units, &code_lines);
 
@@ -185,11 +95,16 @@ pub fn analyze(path: &str, category: Category, syntax: &Syntax) -> FileAnalysis 
         if let Some(body) = unit.node.child_by_field_name("body") {
             let owner = OwnerContext {
                 name: &unit.name,
-                redundant_owner: rules
-                    .findings
-                    .redundant_owner_kinds
-                    .contains(&unit.node.kind())
-                    && (rules.findings.returns_plain_bool)(unit.node, &syntax.source),
+                sequenced_returns: match &rules.findings.shape {
+                    BranchShape::Sequenced {
+                        redundant_owner_kinds,
+                        returns_plain_bool,
+                    } => {
+                        redundant_owner_kinds.contains(&unit.node.kind())
+                            && returns_plain_bool(unit.node, &syntax.source)
+                    }
+                    BranchShape::Conditional { .. } => false,
+                },
                 test_file: category == Category::Test,
             };
             let scan = scan_body(body, &owner, syntax, rules);
@@ -280,7 +195,7 @@ fn tokens_between(syntax: &Syntax, start: usize, end: usize) -> &[Token] {
 
 /// Finds every function unit in pre-order, so units come out sorted by start
 /// (outer before inner) and a unit's parent always precedes it.
-fn discover_units<'tree>(syntax: &'tree Syntax, rules: &FunctionRules) -> Vec<Unit<'tree>> {
+fn discover_units<'tree>(syntax: &'tree Syntax, rules: &LanguageRules) -> Vec<Unit<'tree>> {
     let root = syntax.tree.root_node();
     let mut units: Vec<Unit<'tree>> = Vec::new();
     let mut pending: Vec<(Node<'tree>, Option<usize>)> = vec![(root, None)];
@@ -320,25 +235,50 @@ fn discover_units<'tree>(syntax: &'tree Syntax, rules: &FunctionRules) -> Vec<Un
     units
 }
 
-/// Names units: a declaration's own name, else `file.funcN` (N counts every
-/// top-level unit) or `Parent.funcN` (N counts the parent's direct literals).
-fn name_units(units: &mut [Unit<'_>], syntax: &Syntax, rules: &FunctionRules) {
+/// Names units. Positional languages use a declaration's own name, else
+/// `file.funcN` (N counts every top-level unit) or `Parent.funcN` (N counts
+/// the parent's direct literals). Lexical languages compose the name from the
+/// enclosing classes and unit, and give a unit with no name at all
+/// `anon-<digest>`. A parent always precedes its children.
+fn name_units(units: &mut [Unit<'_>], syntax: &Syntax, rules: &LanguageRules) {
     let mut top_level = 0_usize;
     let mut literals = vec![0_usize; units.len()];
 
     for index in 0..units.len() {
-        let declared = (rules.declared_name)(units[index].node, &syntax.source);
+        match rules.naming {
+            UnitNaming::Positional { declared_name } => {
+                let declared = declared_name(units[index].node, &syntax.source);
 
-        units[index].declared = declared.is_some();
-        units[index].name = match (declared, units[index].parent) {
-            (Some(name), _) => name,
-            (None, None) => format!("file.func{}", top_level + 1),
-            (None, Some(parent)) => {
-                literals[parent] += 1;
+                units[index].declared = declared.is_some();
+                units[index].name = match (declared, units[index].parent) {
+                    (Some(name), _) => name,
+                    (None, None) => format!("file.func{}", top_level + 1),
+                    (None, Some(parent)) => {
+                        literals[parent] += 1;
 
-                format!("{}.func{}", units[parent].name, literals[parent])
+                        format!("{}.func{}", units[parent].name, literals[parent])
+                    }
+                };
             }
-        };
+            UnitNaming::Lexical { name } => {
+                let enclosing = units[index].parent.map(|parent| Enclosing {
+                    node: units[parent].node,
+                    name: &units[parent].name,
+                });
+                let composed = name(units[index].node, &syntax.source, enclosing);
+                let fingerprint = &units[index].fingerprint;
+                let anonymous = format!(
+                    "anon-{}",
+                    fingerprint.strip_prefix("sha256:").unwrap_or(fingerprint)
+                );
+
+                units[index].name = if composed.is_empty() {
+                    anonymous
+                } else {
+                    composed
+                };
+            }
+        }
 
         if units[index].parent.is_none() {
             top_level += 1;
@@ -376,8 +316,9 @@ fn assign_sloc(units: &mut [Unit<'_>], code_lines: &[bool]) {
 struct OwnerContext<'a> {
     /// Display name, recorded in finding details.
     name: &'a str,
-    /// The owner may have redundant-boolean-return findings.
-    redundant_owner: bool,
+    /// Whether blocks in this body are scanned for an `if` followed by a
+    /// returned boolean literal (sequenced branch shapes only).
+    sequenced_returns: bool,
     test_file: bool,
 }
 
@@ -394,7 +335,7 @@ fn scan_body(
     body: Node<'_>,
     owner: &OwnerContext<'_>,
     syntax: &Syntax,
-    rules: &FunctionRules,
+    rules: &LanguageRules,
 ) -> BodyScan {
     let mut complexity = Complexity {
         cyclomatic: 1,
@@ -402,12 +343,14 @@ fn scan_body(
     };
     let mut candidates = Vec::new();
 
-    complexity.signals.flat_guards = statements(body, rules)
-        .into_iter()
-        .filter(|statement| is_guard_clause(*statement, rules))
-        .count()
-        .try_into()
-        .unwrap_or(u32::MAX);
+    if let Some(signals) = &rules.signals {
+        complexity.signals.flat_guards = statements(body, rules)
+            .into_iter()
+            .filter(|statement| is_guard_clause(*statement, signals, rules))
+            .count()
+            .try_into()
+            .unwrap_or(u32::MAX);
+    }
 
     let mut cursor = body.walk();
     let mut pending = vec![(body, 0_u32)];
@@ -439,24 +382,20 @@ fn scan_body(
             complexity.max_nesting = complexity.max_nesting.max(inner);
         }
 
-        if kind == rules.signals.composite_kind {
-            complexity.signals.field_mappings += field_mappings(node, rules);
+        if let Some(signals) = &rules.signals {
+            if kind == signals.composite_kind {
+                complexity.signals.field_mappings += field_mappings(node, signals, rules);
+            }
+
+            if owner.test_file
+                && signals.call_kinds.contains(&kind)
+                && is_assertion_call(node, signals, &syntax.source)
+            {
+                complexity.signals.assertion_like_calls += 1;
+            }
         }
 
-        if owner.test_file
-            && rules.signals.call_kinds.contains(&kind)
-            && is_assertion_call(node, rules, &syntax.source)
-        {
-            complexity.signals.assertion_like_calls += 1;
-        }
-
-        if kind == rules.statements.if_kind {
-            candidates.extend(duplicate_branches(node, owner, syntax, rules));
-        }
-
-        if kind == rules.statements.block_kind && owner.redundant_owner {
-            candidates.extend(redundant_boolean_returns(node, owner, syntax, rules));
-        }
+        candidates.extend(branch_candidates(node, owner, syntax, rules));
 
         let children: Vec<Node<'_>> = node.named_children(&mut cursor).collect();
         pending.extend(children.into_iter().rev().map(|child| (child, inner)));
@@ -469,25 +408,29 @@ fn scan_body(
 }
 
 /// The statements directly inside a block, comments excluded.
-fn statements<'tree>(block: Node<'tree>, rules: &FunctionRules) -> Vec<Node<'tree>> {
+fn statements<'tree>(block: Node<'tree>, rules: &LanguageRules) -> Vec<Node<'tree>> {
     let mut cursor = block.walk();
-    let list = block
-        .named_children(&mut cursor)
-        .find(|child| child.kind() == rules.statements.statement_list_kind);
+    let holder = match rules.statements.statement_list_kind {
+        None => Some(block),
+        Some(list_kind) => block
+            .named_children(&mut cursor)
+            .find(|child| child.kind() == list_kind),
+    };
 
-    let Some(list) = list else {
+    let Some(holder) = holder else {
         return Vec::new();
     };
 
-    let mut inner = list.walk();
+    let mut inner = holder.walk();
 
-    list.named_children(&mut inner)
+    holder
+        .named_children(&mut inner)
         .filter(|child| child.kind() != rules.statements.comment_kind)
         .collect()
 }
 
 /// An `if` with no `else` whose block is one return, break, or continue.
-fn is_guard_clause(statement: Node<'_>, rules: &FunctionRules) -> bool {
+fn is_guard_clause(statement: Node<'_>, signals: &SignalRules, rules: &LanguageRules) -> bool {
     if statement.kind() != rules.statements.if_kind
         || statement.child_by_field_name("alternative").is_some()
     {
@@ -499,12 +442,12 @@ fn is_guard_clause(statement: Node<'_>, rules: &FunctionRules) -> bool {
         .is_some_and(|block| {
             let inner = statements(block, rules);
 
-            inner.len() == 1 && rules.signals.guard_kinds.contains(&inner[0].kind())
+            inner.len() == 1 && signals.guard_kinds.contains(&inner[0].kind())
         })
 }
 
 /// The single named, non-comment child of `node`, if it has exactly one.
-fn only_child<'tree>(node: Node<'tree>, rules: &FunctionRules) -> Option<Node<'tree>> {
+fn only_child<'tree>(node: Node<'tree>, rules: &LanguageRules) -> Option<Node<'tree>> {
     let mut cursor = node.walk();
     let mut children = node
         .named_children(&mut cursor)
@@ -516,8 +459,7 @@ fn only_child<'tree>(node: Node<'tree>, rules: &FunctionRules) -> Option<Node<'t
 
 /// Keyed elements of a struct-like composite literal whose key is a bare
 /// name and whose value is a name, a selector, or a predeclared constant.
-fn field_mappings(literal: Node<'_>, rules: &FunctionRules) -> u32 {
-    let signals = &rules.signals;
+fn field_mappings(literal: Node<'_>, signals: &SignalRules, rules: &LanguageRules) -> u32 {
     let struct_like = literal
         .child_by_field_name("type")
         .is_some_and(|ty| signals.composite_type_kinds.contains(&ty.kind()));
@@ -553,8 +495,7 @@ fn field_mappings(literal: Node<'_>, rules: &FunctionRules) -> u32 {
 
 /// A call whose name reads like an assertion, or that is made on an
 /// assertion package or a test handle. Everything is compared lowercase.
-fn is_assertion_call(call: Node<'_>, rules: &FunctionRules, source: &[u8]) -> bool {
-    let signals = &rules.signals;
+fn is_assertion_call(call: Node<'_>, signals: &SignalRules, source: &[u8]) -> bool {
     let Some(target) = (signals.call_target)(call, source) else {
         return false;
     };
@@ -591,13 +532,45 @@ fn span_of(tokens: &[Token]) -> Option<(Position, Position)> {
     Some((first.start, last.end))
 }
 
+/// The findings that `node` starts, by the language's branch shape.
+fn branch_candidates(
+    node: Node<'_>,
+    owner: &OwnerContext<'_>,
+    syntax: &Syntax,
+    rules: &LanguageRules,
+) -> Vec<Candidate> {
+    let kind = node.kind();
+
+    match &rules.findings.shape {
+        BranchShape::Sequenced { .. } if kind == rules.statements.if_kind => {
+            duplicate_branches(node, owner, syntax, rules)
+                .into_iter()
+                .collect()
+        }
+        BranchShape::Sequenced { .. }
+            if kind == rules.statements.block_kind && owner.sequenced_returns =>
+        {
+            redundant_boolean_returns(node, owner, syntax, rules)
+        }
+        BranchShape::Conditional {
+            else_kind,
+            parenthesized_kind,
+        } if kind == rules.statements.if_kind => {
+            conditional_finding(node, else_kind, parenthesized_kind, owner, syntax, rules)
+                .into_iter()
+                .collect()
+        }
+        _ => Vec::new(),
+    }
+}
+
 /// `duplicate-branches`: an `if` with a plain `else` block whose token text
 /// equals the `then` block's. An `else if` is not a duplicate branch.
 fn duplicate_branches(
     node: Node<'_>,
     owner: &OwnerContext<'_>,
     syntax: &Syntax,
-    rules: &FunctionRules,
+    rules: &LanguageRules,
 ) -> Option<Candidate> {
     let consequence = node.child_by_field_name("consequence")?;
     let alternative = node
@@ -645,7 +618,7 @@ fn redundant_boolean_returns(
     block: Node<'_>,
     owner: &OwnerContext<'_>,
     syntax: &Syntax,
-    rules: &FunctionRules,
+    rules: &LanguageRules,
 ) -> Vec<Candidate> {
     let list = statements(block, rules);
 
@@ -659,7 +632,7 @@ fn redundant_boolean_pair(
     following: Node<'_>,
     owner: &OwnerContext<'_>,
     syntax: &Syntax,
-    rules: &FunctionRules,
+    rules: &LanguageRules,
 ) -> Option<Candidate> {
     if conditional.kind() != rules.statements.if_kind
         || conditional.child_by_field_name("initializer").is_some()
@@ -724,7 +697,7 @@ fn redundant_boolean_pair(
 
 /// The literal returned by `statement`, if it is `return true` or
 /// `return false` and nothing else.
-fn boolean_return(statement: Node<'_>, rules: &FunctionRules) -> Option<bool> {
+fn boolean_return(statement: Node<'_>, rules: &LanguageRules) -> Option<bool> {
     if statement.kind() != rules.statements.return_kind {
         return None;
     }
@@ -732,13 +705,145 @@ fn boolean_return(statement: Node<'_>, rules: &FunctionRules) -> Option<bool> {
     let results = only_child(statement, rules)?;
     let value = only_child(results, rules)?;
 
-    if value.kind() == rules.findings.true_kind {
+    boolean_literal(value, rules)
+}
+
+fn boolean_literal(node: Node<'_>, rules: &LanguageRules) -> Option<bool> {
+    if node.kind() == rules.findings.true_kind {
         Some(true)
-    } else if value.kind() == rules.findings.false_kind {
+    } else if node.kind() == rules.findings.false_kind {
         Some(false)
     } else {
         None
     }
+}
+
+/// A TypeScript `if` and the branch after it, which is its `else` or, with
+/// none, the next statement in the same block. Looks only at the `if`, never
+/// at the code around it, so the finding fires at most once per `if`:
+///
+/// - `redundant-boolean-return` when each branch is a lone `return true` or
+///   `return false` (bare or in a block), the literals differ, and the
+///   condition, minus one pair of parentheses, is a comparison;
+/// - otherwise `duplicate-branches` when the `then` branch is a non-empty
+///   block with the same token text as the other branch. Equality needs a
+///   braced `then` branch, so a bare statement branch is never a duplicate
+///   and needs no statement terminator of its own.
+///
+/// The range runs to the end of the other branch when that is a following
+/// statement. Neither finding carries more detail than its owner.
+fn conditional_finding(
+    node: Node<'_>,
+    else_kind: &str,
+    parenthesized_kind: &str,
+    owner: &OwnerContext<'_>,
+    syntax: &Syntax,
+    rules: &LanguageRules,
+) -> Option<Candidate> {
+    let consequence = node.child_by_field_name("consequence")?;
+    let alternative = match node.child_by_field_name("alternative") {
+        Some(clause) if clause.kind() == else_kind => {
+            let mut cursor = clause.walk();
+
+            clause.named_children(&mut cursor).last().unwrap_or(clause)
+        }
+        Some(branch) => branch,
+        None => {
+            let in_block = node
+                .parent()
+                .is_some_and(|parent| parent.kind() == rules.statements.block_kind);
+            let mut next = node.next_named_sibling();
+
+            while next.is_some_and(|sibling| sibling.kind() == rules.statements.comment_kind) {
+                next = next.and_then(|sibling| sibling.next_named_sibling());
+            }
+
+            next.filter(|_| in_block)?
+        }
+    };
+
+    let literal = |branch: Node<'_>| {
+        let statement = if branch.kind() == rules.statements.block_kind {
+            let mut inner = statements(branch, rules).into_iter();
+
+            inner.next().filter(|_| inner.next().is_none())?
+        } else {
+            branch
+        };
+
+        if statement.kind() != rules.statements.return_kind || statement.named_child_count() != 1 {
+            return None;
+        }
+
+        boolean_literal(statement.named_child(0)?, rules)
+    };
+
+    let mut condition = node.child_by_field_name("condition");
+
+    if let Some(wrapped) = condition.filter(|wrapper| wrapper.kind() == parenthesized_kind)
+        && wrapped.named_child_count() == 1
+    {
+        condition = wrapped.named_child(0);
+    }
+
+    let comparison = condition.is_some_and(|condition| {
+        condition.kind() == rules.binary_kind
+            && condition
+                .child_by_field_name("operator")
+                .is_some_and(|operator| {
+                    rules
+                        .findings
+                        .comparison_operators
+                        .contains(&operator.kind())
+                })
+    });
+    let opposite_returns = matches!(
+        (literal(consequence), literal(alternative)),
+        (Some(then_value), Some(other_value)) if then_value != other_value
+    );
+
+    let tokens = |branch: Node<'_>| {
+        identity::token_content(
+            syntax,
+            tokens_between(syntax, branch.start_byte(), branch.end_byte()),
+        )
+    };
+    let (rule, message) = if opposite_returns && comparison {
+        (
+            REDUNDANT_BOOLEAN_RETURN,
+            rules.findings.redundant_boolean_message,
+        )
+    } else if consequence.kind() == rules.statements.block_kind
+        && !statements(consequence, rules).is_empty()
+        && tokens(consequence) == tokens(alternative)
+    {
+        (
+            DUPLICATE_BRANCHES,
+            rules.findings.duplicate_branches_message,
+        )
+    } else {
+        return None;
+    };
+
+    let (start, mut end) = node_span(&syntax.source, node);
+    let mut content = tokens(node);
+
+    if alternative.end_byte() > node.end_byte() {
+        end = node_span(&syntax.source, alternative).1;
+        content.extend(tokens(alternative));
+    }
+
+    Some(Candidate {
+        rule,
+        message,
+        start,
+        end,
+        content,
+        details: vec![
+            detail("owner", owner.name),
+            detail("candidate_only", "true"),
+        ],
+    })
 }
 
 fn detail(key: &str, value: &str) -> Detail {

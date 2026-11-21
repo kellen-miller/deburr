@@ -5,18 +5,23 @@
 
 use tree_sitter::Node;
 
-use super::LanguageRules;
-use crate::analysis::{CallTarget, FindingRules, FunctionRules, SignalRules, StatementRules};
+use super::{
+    BranchShape, CallTarget, FindingRules, LanguageRules, SignalRules, StatementRules, TokenRules,
+    UnitNaming,
+};
 
 /// Rules table for Go.
-pub static RULES: LanguageRules = LanguageRules;
-
-/// What the function engine needs to know about Go.
-///
-/// `LanguageRules` is still the unit struct from the scaffold and lives
-/// outside this ticket's owned files, so the function table is exported
-/// here and selected in `analysis::analyze`.
-pub static FUNCTIONS: FunctionRules = FunctionRules {
+pub static RULES: LanguageRules = LanguageRules {
+    tokens: TokenRules {
+        statement_containers: &["statement_list"],
+        atomic: &[
+            "interpreted_string_literal",
+            "raw_string_literal",
+            "rune_literal",
+        ],
+        code_children: &[],
+        comments: &["comment"],
+    },
     function_kinds: &["function_declaration", "method_declaration", "func_literal"],
     // `default_case` is deliberately absent: it adds no decision.
     decision_kinds: &[
@@ -35,16 +40,16 @@ pub static FUNCTIONS: FunctionRules = FunctionRules {
     ],
     binary_kind: "binary_expression",
     short_circuit_operators: &["&&", "||"],
-    declared_name,
+    naming: UnitNaming::Positional { declared_name },
     package_name,
     statements: StatementRules {
         comment_kind: "comment",
         block_kind: "block",
-        statement_list_kind: "statement_list",
+        statement_list_kind: Some("statement_list"),
         if_kind: "if_statement",
         return_kind: "return_statement",
     },
-    signals: SignalRules {
+    signals: Some(SignalRules {
         // `goto` and `fallthrough` are different kinds and do not guard.
         guard_kinds: &["return_statement", "break_statement", "continue_statement"],
         composite_kind: "composite_literal",
@@ -71,10 +76,12 @@ pub static FUNCTIONS: FunctionRules = FunctionRules {
         assertion_receivers: &["assert", "require", "testify"],
         testing_receivers: &["t", "tb", "tt", "test", "testingt"],
         testing_methods: &["error", "errorf", "fatal", "fatalf", "fail", "failnow"],
-    },
+    }),
     findings: FindingRules {
-        redundant_owner_kinds: &["function_declaration", "method_declaration"],
-        returns_plain_bool,
+        shape: BranchShape::Sequenced {
+            redundant_owner_kinds: &["function_declaration", "method_declaration"],
+            returns_plain_bool,
+        },
         true_kind: "true",
         false_kind: "false",
         comparison_operators: &["==", "!=", "<", ">", "<=", ">="],

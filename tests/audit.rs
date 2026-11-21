@@ -521,14 +521,25 @@ fn string_like_nodes_are_single_tokens() {
     assert!(go.contains(&"`c\nd`".to_owned()), "{go:?}");
     assert!(go.contains(&"'e'".to_owned()), "{go:?}");
 
-    let ts = token_texts(
-        Language::TypeScript,
-        "const s = `a${b}c` + \"x\" + /re+/g;\n",
-    );
+    let ts = token_texts(Language::TypeScript, "const s = `abc` + \"x\" + /re+/g;\n");
 
-    assert!(ts.contains(&"`a${b}c`".to_owned()), "{ts:?}");
+    assert!(ts.contains(&"`abc`".to_owned()), "{ts:?}");
     assert!(ts.contains(&"\"x\"".to_owned()), "{ts:?}");
     assert!(ts.contains(&"/re+/g".to_owned()), "{ts:?}");
+}
+
+#[test]
+fn template_literals_with_substitutions_are_tokenized_by_their_leaves() {
+    // A template literal without a substitution is one token, but `${..}`
+    // holds code: a function written there must have tokens of its own to be
+    // measured, so the literal is split around it.
+    let ts = token_texts(Language::TypeScript, "const s = `a${b}c`;\n");
+
+    assert!(!ts.contains(&"`a${b}c`".to_owned()), "{ts:?}");
+    assert_eq!(
+        ts,
+        ["const", "s", "=", "`", "a", "${", "b", "}", "c", "`", ";"]
+    );
 }
 
 #[test]
@@ -538,6 +549,54 @@ fn typescript_errors_report_the_first_error_node() {
     let error = syntax_error(Language::TypeScript, "const = ;\n").expect("syntax error");
 
     assert!(error.starts_with("syntax error at 1:"), "{error}");
+}
+
+#[test]
+fn parse_errors_name_the_first_error_inside_the_tree_not_the_root() {
+    // A run of unbalanced braces after a generic method (which tree-sitter-go
+    // cannot parse) makes recovery give up: the root becomes an `ERROR` that
+    // spans the whole file. The message must still point at the generic
+    // method's own error node, not at the root's 1:1.
+    let source = "package a\n\nfunc F() {}\n\nfunc (T) M[P any]() {}\n{{{{{{{{{{{{{{{{{{{{\n";
+    let parsed = syntax::parse(Language::Go, source.as_bytes().to_vec())
+        .err()
+        .and_then(|error| error.recovered().ok())
+        .expect("tree-sitter recovers a tree");
+
+    assert!(
+        parsed.tree.root_node().is_error(),
+        "fixture lost its root ERROR"
+    );
+    assert_eq!(
+        syntax_error(Language::Go, source).as_deref(),
+        Some("syntax error at 5:14")
+    );
+
+    // A root `ERROR` with nothing flagged inside it can only be reported at
+    // the root.
+    assert_eq!(
+        syntax_error(Language::Go, "{{{{{{{{{{{{{{{{{{{{\n").as_deref(),
+        Some("syntax error at 1:1")
+    );
+}
+
+#[test]
+fn an_explicit_semicolon_alone_on_a_line_is_a_code_line() {
+    // The Go scanner returns an explicit `;` as a token, so its line is code
+    // even though the statement terminator that replaces it is not text.
+    let dir = tempfile::tempdir().expect("temp dir");
+    let root = dir.path();
+    write(
+        root,
+        "a.go",
+        "package a\n\nfunc F() {\n\tx := 1\n\t;\n\t_ = x\n}\n",
+    );
+    write(root, "b.ts", "function f() {\n  g()\n  ;\n  h();\n}\n");
+
+    let report = run(root, &options()).report;
+
+    assert_eq!(file(&report, "a.go").code_lines, 6);
+    assert_eq!(file(&report, "b.ts").code_lines, 5);
 }
 
 #[test]

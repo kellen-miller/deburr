@@ -105,6 +105,36 @@ impl Projection {
     }
 }
 
+/// Replaces every `anon-<64 hex digits>` with `anon-*`. The digest in an
+/// anonymous function's name is computed over each version's own token text
+/// (the Go version quotes the leaves, Rust adds statement terminators), so
+/// it is not comparable; the name around it still is.
+fn mask_anonymous_digests(text: &str) -> String {
+    const MARKER: &str = "anon-";
+    const DIGEST_LEN: usize = 64;
+
+    let mut masked = String::with_capacity(text.len());
+    let mut rest = text;
+
+    while let Some(at) = rest.find(MARKER) {
+        let (before, after) = rest.split_at(at + MARKER.len());
+        let digits = after.bytes().take_while(u8::is_ascii_hexdigit).count();
+
+        masked.push_str(before);
+
+        if digits >= DIGEST_LEN {
+            masked.push('*');
+            rest = &after[DIGEST_LEN..];
+        } else {
+            rest = after;
+        }
+    }
+
+    masked.push_str(rest);
+
+    masked
+}
+
 /// Picks `names` out of a JSON object; absent or null fields project as null.
 fn pick(object: &Value, names: &[&str]) -> Fields {
     names
@@ -179,7 +209,7 @@ pub(crate) fn project(report: &Value) -> Projection {
         let key = format!(
             "{}::{}",
             function["path"].as_str().unwrap_or_default(),
-            function["name"].as_str().unwrap_or_default()
+            mask_anonymous_digests(function["name"].as_str().unwrap_or_default())
         );
         let mut fields = pick(
             function,
@@ -242,7 +272,11 @@ pub(crate) fn project(report: &Value) -> Projection {
             .flatten()
             .find(|detail| detail["key"] == "owner")
             .map(|detail| detail.get("value"));
-        fields.insert("owner".to_owned(), Scalar::from_json(owner.flatten()));
+        let owner = match Scalar::from_json(owner.flatten()) {
+            Scalar::Text(name) => Scalar::Text(mask_anonymous_digests(&name)),
+            other => other,
+        };
+        fields.insert("owner".to_owned(), owner);
         fields.insert(
             "identity_ambiguous".to_owned(),
             Scalar::Bool(finding["identity_ambiguous"].as_bool().unwrap_or(false)),
@@ -430,6 +464,21 @@ mod tests {
                 .any(|d| d.key == "a.go::duplicate-branches#2" && d.field == "start_line")
         );
         assert!(!differences.iter().any(|d| d.field == "owner"));
+    }
+
+    #[test]
+    fn anonymous_digests_are_masked_wherever_they_appear() {
+        let digest = "ab".repeat(32);
+
+        assert_eq!(mask_anonymous_digests(&format!("anon-{digest}")), "anon-*");
+        assert_eq!(
+            mask_anonymous_digests(&format!("outer.anon-{digest}.anon-{digest}")),
+            "outer.anon-*.anon-*"
+        );
+        // Shorter hex runs are ordinary names, as is `anon-` with no digits.
+        assert_eq!(mask_anonymous_digests("anon-abc"), "anon-abc");
+        assert_eq!(mask_anonymous_digests("anon-"), "anon-");
+        assert_eq!(mask_anonymous_digests("outer."), "outer.");
     }
 
     #[test]

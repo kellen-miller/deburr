@@ -224,11 +224,48 @@ pub fn assign_unit_identities(units: &[UnitSketch<'_>]) -> Vec<UnitIdentity> {
     identities
 }
 
+/// Assigns identities for languages that name units lexically: the name is
+/// the identity, and a repeat of a name gets `#2`, `#3`, ... in source order.
+/// A unit is ambiguous when another unit in the file has its name or when its
+/// parent is ambiguous, so everything under a repeated function is too.
+#[must_use]
+pub fn assign_lexical_identities(units: &[UnitSketch<'_>]) -> Vec<UnitIdentity> {
+    let mut totals: HashMap<&str, usize> = HashMap::new();
+
+    for unit in units {
+        *totals.entry(unit.name).or_default() += 1;
+    }
+
+    let mut seen: HashMap<&str, usize> = HashMap::new();
+    let mut identities: Vec<UnitIdentity> = Vec::with_capacity(units.len());
+
+    for unit in units {
+        let occurrence = seen.entry(unit.name).or_default();
+        *occurrence += 1;
+
+        let shared = totals.get(unit.name).is_some_and(|&count| count > 1);
+        let ambiguous = shared
+            || unit
+                .parent
+                .is_some_and(|parent| identities[parent].ambiguous);
+        let name = if *occurrence > 1 {
+            format!("{}#{}", unit.name, *occurrence)
+        } else {
+            unit.name.to_owned()
+        };
+
+        identities.push(UnitIdentity { name, ambiguous });
+    }
+
+    identities
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        FindingSketch, ManifestEntry, UnitSketch, assign_unit_identities, finding_fingerprint,
-        finding_id, function_id, manifest_digest, sha256_prefixed,
+        FindingSketch, ManifestEntry, UnitSketch, assign_lexical_identities,
+        assign_unit_identities, finding_fingerprint, finding_id, function_id, manifest_digest,
+        sha256_prefixed,
     };
 
     fn sketch<'a>(
@@ -301,6 +338,42 @@ mod tests {
         assert_eq!(identities[2].name, "Outer.anon-11#2");
         assert!(identities[1].ambiguous && identities[2].ambiguous);
         assert!(!identities[0].ambiguous);
+    }
+
+    #[test]
+    fn lexical_identities_are_names_with_suffixes_for_repeats() {
+        let units = [
+            sketch("run", None, true, "sha256:aa"),
+            sketch("run.inner", Some(0), false, "sha256:11"),
+            sketch("run", None, true, "sha256:bb"),
+            sketch("run.inner", Some(2), false, "sha256:22"),
+            sketch("solo", None, true, "sha256:cc"),
+            sketch("solo.", Some(4), false, "sha256:33"),
+        ];
+        let identities = assign_lexical_identities(&units);
+        let names: Vec<&str> = identities.iter().map(|id| id.name.as_str()).collect();
+
+        assert_eq!(
+            names,
+            ["run", "run.inner", "run#2", "run.inner#2", "solo", "solo."]
+        );
+        // A repeated name is ambiguous for every holder, and so is anything
+        // under one; a unique name under a unique parent is not.
+        assert!(identities[..4].iter().all(|id| id.ambiguous));
+        assert!(!identities[4].ambiguous && !identities[5].ambiguous);
+    }
+
+    #[test]
+    fn a_unique_child_of_an_ambiguous_parent_is_ambiguous() {
+        let units = [
+            sketch("run", None, true, "sha256:aa"),
+            sketch("run", None, true, "sha256:bb"),
+            sketch("run.only", Some(1), false, "sha256:11"),
+        ];
+        let identities = assign_lexical_identities(&units);
+
+        assert_eq!(identities[2].name, "run.only");
+        assert!(identities[2].ambiguous);
     }
 
     fn finding<'a>(
