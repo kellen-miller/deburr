@@ -1,4 +1,21 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": ["local>kellen-miller/.github:renovate-config"]
+  "extends": ["local>kellen-miller/.github:renovate-config"],
+  "packageRules": [
+    {
+      "description": "cpd-core is pinned exactly and its 0.1.x API changes between patch releases; only src/duplication.rs may need edits.",
+      "matchManagers": ["cargo"],
+      "matchPackageNames": ["cpd-core"],
+      "groupName": "cpd crates",
+      "prBodyNotes": [
+        "Run `cargo test --locked --test duplication`. The snapshot test over `tests/corpus/dup/snapshot` must still pass; review any change to its clones before accepting."
+      ]
+    },
+    {
+      "description": "tree-sitter links a C library, so the runtime and its grammars must resolve together.",
+      "matchManagers": ["cargo"],
+      "matchPackageNames": ["/^tree-sitter/"],
+      "groupName": "tree-sitter"
+    }
+  ]
 }
