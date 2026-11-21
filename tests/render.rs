@@ -521,6 +521,10 @@ fn sample_comparison() -> Comparison {
     comparison.compatible = true;
     comparison.complete = true;
     comparison.reason = String::new();
+    // Renderers show the ledgers they are given; fix them here instead of
+    // depending on how `compare` derives ledgers from the sample reports.
+    comparison.before_review = ledger();
+    comparison.after_review = ledger();
     comparison.metrics_delta = Some(MetricsDelta {
         all: MetricDelta {
             high_complexity_mass_share: Some(-0.25),
