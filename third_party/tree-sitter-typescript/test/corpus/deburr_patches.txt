@@ -1,0 +1,349 @@
+==========================================
+Import types in parentheses
+==========================================
+
+type A = (import("x").T);
+type B = (import("x").T | undefined)[];
+
+---
+
+(program
+  (type_alias_declaration
+    (type_identifier)
+    (parenthesized_type
+      (member_expression
+        (call_expression
+          (import)
+          (arguments
+            (string
+              (string_fragment))))
+        (property_identifier))))
+  (type_alias_declaration
+    (type_identifier)
+    (array_type
+      (parenthesized_type
+        (union_type
+          (member_expression
+            (call_expression
+              (import)
+              (arguments
+                (string
+                  (string_fragment))))
+            (property_identifier))
+          (literal_type
+            (undefined)))))))
+
+==========================================
+Import type arrays
+==========================================
+
+type A = import("x").T[];
+declare function f(): import("discord.js").Builder[];
+
+---
+
+(program
+  (type_alias_declaration
+    (type_identifier)
+    (array_type
+      (member_expression
+        (call_expression
+          (import)
+          (arguments
+            (string
+              (string_fragment))))
+        (property_identifier))))
+  (ambient_declaration
+    (function_signature
+      (identifier)
+      (formal_parameters)
+      (type_annotation
+        (array_type
+          (member_expression
+            (call_expression
+              (import)
+              (arguments
+                (string
+                  (string_fragment))))
+            (property_identifier)))))))
+
+==========================================
+Import types with type arguments
+==========================================
+
+const x: import("foo").Bar<Baz> = y;
+type C = import("x").A.B<C>[];
+type D = import("x").T<U>["k"];
+
+---
+
+(program
+  (lexical_declaration
+    (variable_declarator
+      (identifier)
+      (type_annotation
+        (generic_type
+          (member_expression
+            (call_expression
+              (import)
+              (arguments
+                (string
+                  (string_fragment))))
+            (property_identifier))
+          (type_arguments
+            (type_identifier))))
+      (identifier)))
+  (type_alias_declaration
+    (type_identifier)
+    (array_type
+      (generic_type
+        (member_expression
+          (member_expression
+            (call_expression
+              (import)
+              (arguments
+                (string
+                  (string_fragment))))
+            (property_identifier))
+          (property_identifier))
+        (type_arguments
+          (type_identifier)))))
+  (type_alias_declaration
+    (type_identifier)
+    (lookup_type
+      (generic_type
+        (member_expression
+          (call_expression
+            (import)
+            (arguments
+              (string
+                (string_fragment))))
+          (property_identifier))
+        (type_arguments
+          (type_identifier)))
+      (literal_type
+        (string
+          (string_fragment))))))
+
+==========================================
+Typeof import in call type arguments
+==========================================
+
+f<typeof import("x")>();
+const m = importOriginal<typeof import("x")>();
+const n = jest.requireActual<typeof import("x")>("x");
+
+---
+
+(program
+  (expression_statement
+    (call_expression
+      (identifier)
+      (type_arguments
+        (type_query
+          (call_expression
+            (import)
+            (arguments
+              (string
+                (string_fragment))))))
+      (arguments)))
+  (lexical_declaration
+    (variable_declarator
+      (identifier)
+      (call_expression
+        (identifier)
+        (type_arguments
+          (type_query
+            (call_expression
+              (import)
+              (arguments
+                (string
+                  (string_fragment))))))
+        (arguments))))
+  (lexical_declaration
+    (variable_declarator
+      (identifier)
+      (call_expression
+        (member_expression
+          (identifier)
+          (property_identifier))
+        (type_arguments
+          (type_query
+            (call_expression
+              (import)
+              (arguments
+                (string
+                  (string_fragment))))))
+        (arguments
+          (string
+            (string_fragment)))))))
+
+==========================================
+Import calls in expressions
+==========================================
+
+if (a < import("x").length) {}
+const m = (import("./m.js"));
+
+---
+
+(program
+  (if_statement
+    (parenthesized_expression
+      (binary_expression
+        (identifier)
+        (member_expression
+          (call_expression
+            (import)
+            (arguments
+              (string
+                (string_fragment))))
+          (property_identifier))))
+    (statement_block))
+  (lexical_declaration
+    (variable_declarator
+      (identifier)
+      (parenthesized_expression
+        (call_expression
+          (import)
+          (arguments
+            (string
+              (string_fragment))))))))
+
+==========================================
+Labeled tuple elements named like keywords
+==========================================
+
+type A = [spoken: string, symbol: string][];
+type B = [string: number, any?: boolean, type: string];
+type C = [any?, readonly string[], unique symbol];
+
+---
+
+(program
+  (type_alias_declaration
+    (type_identifier)
+    (array_type
+      (tuple_type
+        (required_parameter
+          (identifier)
+          (type_annotation
+            (predefined_type)))
+        (required_parameter
+          (identifier)
+          (type_annotation
+            (predefined_type))))))
+  (type_alias_declaration
+    (type_identifier)
+    (tuple_type
+      (required_parameter
+        (identifier)
+        (type_annotation
+          (predefined_type)))
+      (optional_parameter
+        (identifier)
+        (type_annotation
+          (predefined_type)))
+      (required_parameter
+        (identifier)
+        (type_annotation
+          (predefined_type)))))
+  (type_alias_declaration
+    (type_identifier)
+    (tuple_type
+      (optional_type
+        (predefined_type))
+      (readonly_type
+        (array_type
+          (predefined_type)))
+      (predefined_type))))
+
+==========================================
+Unique as an identifier
+==========================================
+
+for (let i = 1; i < unique.length; i++) {}
+declare const s: unique symbol;
+
+---
+
+(program
+  (for_statement
+    (lexical_declaration
+      (variable_declarator
+        (identifier)
+        (number)))
+    (binary_expression
+      (identifier)
+      (member_expression
+        (identifier)
+        (property_identifier)))
+    (update_expression
+      (identifier))
+    (statement_block))
+  (ambient_declaration
+    (lexical_declaration
+      (variable_declarator
+        (identifier)
+        (type_annotation
+          (predefined_type))))))
+
+==========================================
+Call signatures with type parameters after a line break
+==========================================
+
+type S = {
+  register: {
+    (plugin: P): () => void
+    <T extends R<string, object>>(plugin: P<T>): string
+  }
+}
+x = a
+< b;
+
+---
+
+(program
+  (type_alias_declaration
+    (type_identifier)
+    (object_type
+      (property_signature
+        (property_identifier)
+        (type_annotation
+          (object_type
+            (call_signature
+              (formal_parameters
+                (required_parameter
+                  (identifier)
+                  (type_annotation
+                    (type_identifier))))
+              (type_annotation
+                (function_type
+                  (formal_parameters)
+                  (predefined_type))))
+            (call_signature
+              (type_parameters
+                (type_parameter
+                  (type_identifier)
+                  (constraint
+                    (generic_type
+                      (type_identifier)
+                      (type_arguments
+                        (predefined_type)
+                        (predefined_type))))))
+              (formal_parameters
+                (required_parameter
+                  (identifier)
+                  (type_annotation
+                    (generic_type
+                      (type_identifier)
+                      (type_arguments
+                        (type_identifier))))))
+              (type_annotation
+                (predefined_type))))))))
+  (expression_statement
+    (assignment_expression
+      (identifier)
+      (binary_expression
+        (identifier)
+        (identifier)))))
