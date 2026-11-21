@@ -1,5 +1,6 @@
 //! TypeScript and TSX node-kind rules, confirmed against the patched
-//! tree-sitter-typescript grammar in `third_party/`. Both dialects share one
+//! tree-sitter-typescript grammar (the `kellen-miller/tree-sitter-typescript`
+//! fork, pinned in `Cargo.toml`). Both dialects share one
 //! table; only the grammar differs.
 //!
 //! A function unit is any function-like node with a `body`, so overload

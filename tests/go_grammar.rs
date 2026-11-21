@@ -1,7 +1,7 @@
 //! The patched tree-sitter-go grammar accepts `new(expr)` (Go 1.26) and
 //! generic methods (Go 1.27). Each shape comes from a real `GOROOT/src` file
-//! that the published 0.25.0 grammar rejected; see
-//! `third_party/tree-sitter-go/PATCHES.md`.
+//! that the published 0.25.0 grammar rejected; see `PATCHES.md` on the fork's
+//! `deburr-patches` branch (https://github.com/kellen-miller/tree-sitter-go/blob/deburr-patches/PATCHES.md).
 
 use deburr::syntax::{self, Language, SyntaxError};
 

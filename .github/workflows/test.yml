@@ -34,7 +34,6 @@ jobs:
                 "rust-toolchain.toml",
                 "src/**",
                 "templates/**",
-                "third_party/**",
                 "docs/cleanup.md",
                 "tests/corpus/**",
                 "scripts/**",
@@ -46,8 +45,7 @@ jobs:
                 "Cargo.lock",
                 "rust-toolchain.toml",
                 "src/**",
-                "tests/vscode.rs",
-                "third_party/tree-sitter-typescript/**"
+                "tests/vscode.rs"
               ]
             }
 

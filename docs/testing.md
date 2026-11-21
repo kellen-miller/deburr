@@ -134,7 +134,7 @@ count next to that baseline, so a difference means the grammar or function
 discovery changed and needs an explanation. The full-projection comparison
 with the Go binary differs only where the Go version's pure-Go parser was wrong
 (generator-method names and method ranges stretched over a trailing comment);
-`tests/parity/accepted.toml` lists those entries one by one. The vendored
+`tests/parity/accepted.toml` lists those entries one by one. The forked
 TypeScript grammar carries the patches that make the whole corpus parse.
 
 When changing the pinned corpus or a grammar, review every baseline change and

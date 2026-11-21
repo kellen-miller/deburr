@@ -46,8 +46,8 @@ Findings from the crate investigation that shaped the design:
   Byte identity would have meant reimplementing `go/printer`, `go/parser`
   messages, Go's JSON encoding, and `html/template` for no user benefit.
 
-Two tree-sitter grammars are vendored and patched where upstream releases lag
-the languages (TypeScript import types and Go generic methods). Both are
+Two tree-sitter grammars are patched in forks where upstream releases lag the
+languages (TypeScript import types and Go generic methods). Both forks are
 carried until upstream releases a fix.
 
 ## Sources

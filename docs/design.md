@@ -55,13 +55,19 @@ A file is a parse error if its tree contains an `ERROR` or `MISSING` node. For
 Go, the structural check also applies: the first non-comment top-level child
 must be a `package_clause`, and every top-level child must be a package clause,
 import, function, method, type, var, or const declaration, or a comment. The
-message is `syntax error at LINE:COLUMN`. Lexical validity of individual
-literals is not re-checked.
+message is `syntax error at LINE:COLUMN`. Go string and rune literals are
+also checked against the Go spec (valid escapes, octal values up to 255, no
+surrogate or out-of-range `\u`/`\U` code points, one character per rune
+literal), because tree-sitter accepts some literals `go/parser` rejects.
 
-The Go and TypeScript grammars are vendored under `third_party/` with small
-patches (import types in TypeScript type positions, generic methods and
-`new(expr)` in Go) that upstream releases lack. Each directory records the
-upstream version and a `PATCHES.md`.
+The Go and TypeScript grammars come from forks with small patches that
+upstream releases lack: import types and three smaller gaps in TypeScript, and
+generic methods and `new(expr)` in Go. `Cargo.toml` pins each fork's
+`deburr-patches` branch by commit
+([tree-sitter-typescript](https://github.com/kellen-miller/tree-sitter-typescript/blob/deburr-patches/PATCHES.md), [tree-sitter-go](https://github.com/kellen-miller/tree-sitter-go/blob/deburr-patches/PATCHES.md)). Each
+`PATCHES.md` records the upstream version, the change, and how to regenerate
+the parser. To update a grammar, push a new commit to the fork branch, change
+the `rev`, and rerun the grammar tests and the VS Code corpus check.
 
 ### Code tokens
 

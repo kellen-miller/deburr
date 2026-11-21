@@ -2,7 +2,8 @@
 //! type (upstream issue #322), keywords used as identifiers, and generic call
 //! signatures after a line break, in both the TypeScript and TSX dialects.
 //! Each shape comes from a real file that the published 0.23.2 grammar
-//! rejected; see `third_party/tree-sitter-typescript/PATCHES.md`.
+//! rejected; see `PATCHES.md` on the fork's `deburr-patches` branch
+//! (https://github.com/kellen-miller/tree-sitter-typescript/blob/deburr-patches/PATCHES.md).
 
 use deburr::syntax::{self, Language, SyntaxError};
 
