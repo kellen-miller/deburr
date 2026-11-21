@@ -553,10 +553,22 @@ fn typescript_errors_report_the_first_error_node() {
 
 #[test]
 fn parse_errors_name_the_first_error_inside_the_tree_not_the_root() {
-    // A run of unbalanced braces after a generic method (which tree-sitter-go
-    // cannot parse) makes recovery give up: the root becomes an `ERROR` that
-    // spans the whole file. The message must still point at the generic
-    // method's own error node, not at the root's 1:1.
+    // An inner error node is reported at its own position: the generic
+    // method's broken type parameter list, not the file start.
+    let inner = "package a\n\nfunc F() {}\n\nfunc (T) M[P any() {}\n";
+    assert_eq!(
+        syntax_error(Language::Go, inner)
+            .as_deref()
+            .map(|e| e.starts_with("syntax error at 5:")),
+        Some(true),
+        "{:?}",
+        syntax_error(Language::Go, inner)
+    );
+
+    // A run of unbalanced braces makes recovery wrap the whole file in a root
+    // `ERROR` with no error node inside it. The well-formed declarations
+    // survive as named children; the first stray token is where the file
+    // broke, so the message points there instead of at the root's 1:1.
     let source = "package a\n\nfunc F() {}\n\nfunc (T) M[P any]() {}\n{{{{{{{{{{{{{{{{{{{{\n";
     let parsed = syntax::parse(Language::Go, source.as_bytes().to_vec())
         .err()
@@ -569,14 +581,7 @@ fn parse_errors_name_the_first_error_inside_the_tree_not_the_root() {
     );
     assert_eq!(
         syntax_error(Language::Go, source).as_deref(),
-        Some("syntax error at 5:14")
-    );
-
-    // A root `ERROR` with nothing flagged inside it can only be reported at
-    // the root.
-    assert_eq!(
-        syntax_error(Language::Go, "{{{{{{{{{{{{{{{{{{{{\n").as_deref(),
-        Some("syntax error at 1:1")
+        Some("syntax error at 6:1")
     );
 }
 

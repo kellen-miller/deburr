@@ -379,13 +379,25 @@ fn first_error(root: Node<'_>) -> Option<Point> {
 
             while !cursor.goto_next_sibling() {
                 if !cursor.goto_parent() || cursor.node() == root {
-                    return Some(root.start_position());
+                    return Some(stray_token_position(root));
                 }
             }
         }
     }
 
-    Some(root.start_position())
+    Some(stray_token_position(root))
+}
+
+/// When recovery wraps the whole file in an `ERROR` root with no error node
+/// inside it, the well-formed items survive as named children and the text
+/// that broke the parse is left as unnamed tokens; the first of those is the
+/// position worth reporting. Only an error with no such token falls back to
+/// the root itself.
+fn stray_token_position(root: Node<'_>) -> Point {
+    let mut cursor = root.walk();
+    let stray = root.children(&mut cursor).find(|child| !child.is_named());
+
+    stray.map_or_else(|| root.start_position(), |child| child.start_position())
 }
 
 /// tree-sitter-go accepts top-level statements and files without a package
