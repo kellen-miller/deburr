@@ -6,16 +6,23 @@
 //! person sees: ranking, grouping, hint thresholds, advice, review filtering,
 //! and how numbers read. Renderers only lay the result out.
 
+mod comparison;
+mod groups;
+
 use std::cmp::Reverse;
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, HashMap};
+
+use groups::{FunctionIndex, covered_lines, group_clones, group_item};
 
 use crate::report::{
-    Category, ChangeState, CloneEndpoint, CodeClone, Comparison, Detail, DuplicationStatus,
-    FileStatus, Finding, Function, Location, Position, Report, ReviewKind, ReviewStatus,
+    Category, CodeClone, Detail, DuplicationStatus, FileStatus, Finding, Function, Location,
+    Report, ReviewKind, ReviewStatus,
 };
 
 /// Directory names that usually hold tooling or test helpers rather than
 /// shipped code. Matched against every directory component of a path.
+pub use comparison::summarize_comparison;
+
 const TOOLING_DIRECTORIES: [&str; 9] = [
     "hack",
     "test",
@@ -176,12 +183,12 @@ fn number_word(value: u32) -> String {
         .map_or_else(|| count(value), |word| (*word).to_owned())
 }
 
-fn directory_of(path: &str) -> &str {
+pub(super) fn directory_of(path: &str) -> &str {
     path.rsplit_once('/').map_or("", |(directory, _)| directory)
 }
 
 /// `a/b/`, or `./` at the root.
-fn directory_label(directory: &str) -> String {
+pub(super) fn directory_label(directory: &str) -> String {
     if directory.is_empty() {
         "./".to_owned()
     } else {
@@ -205,332 +212,8 @@ fn join_names(names: &[String]) -> String {
 }
 
 /// The identity part of a function ID: everything after the last `::`.
-fn bare_name(id: &str) -> &str {
+pub(super) fn bare_name(id: &str) -> &str {
     id.rsplit_once("::").map_or(id, |(_, name)| name)
-}
-
-/// Distinct covered lines per path for `(path, start, end)` spans, counting
-/// each line once.
-fn covered_lines<'a>(
-    spans: impl IntoIterator<Item = (&'a str, u32, u32)>,
-) -> BTreeMap<&'a str, u32> {
-    let mut by_path: BTreeMap<&str, Vec<(u32, u32)>> = BTreeMap::new();
-
-    for (path, start, end) in spans {
-        by_path.entry(path).or_default().push((start, end));
-    }
-
-    by_path
-        .into_iter()
-        .map(|(path, mut spans)| {
-            spans.sort_unstable();
-
-            let mut total = 0;
-            let mut reached = 0;
-
-            for (start, end) in spans {
-                let first = start.max(reached + 1);
-
-                if end >= first {
-                    total += end - first + 1;
-                    reached = end;
-                }
-            }
-
-            (path, total)
-        })
-        .collect()
-}
-
-/// Union-find over owner indexes.
-#[derive(Default)]
-struct Owners {
-    keys: HashMap<String, usize>,
-    parent: Vec<usize>,
-}
-
-impl Owners {
-    fn index(&mut self, key: String) -> usize {
-        if let Some(&index) = self.keys.get(&key) {
-            return index;
-        }
-
-        let index = self.parent.len();
-        self.parent.push(index);
-        self.keys.insert(key, index);
-
-        index
-    }
-
-    fn find(&mut self, mut index: usize) -> usize {
-        while self.parent[index] != index {
-            self.parent[index] = self.parent[self.parent[index]];
-            index = self.parent[index];
-        }
-
-        index
-    }
-
-    fn join(&mut self, left: usize, right: usize) {
-        let (left, right) = (self.find(left), self.find(right));
-
-        if left != right {
-            self.parent[left.max(right)] = left.min(right);
-        }
-    }
-}
-
-/// A function that owns copied code.
-#[derive(Debug, Clone)]
-struct Member {
-    id: String,
-    path: String,
-    line: u32,
-}
-
-impl Member {
-    fn name(&self) -> &str {
-        bare_name(&self.id)
-    }
-}
-
-/// One connected set of clones and the functions that own them.
-struct Group<'a> {
-    category: Category,
-    clones: Vec<&'a CodeClone>,
-    members: Vec<Member>,
-    /// Distinct endpoint regions, by path and position.
-    regions: Vec<Location>,
-    copied_lines: u32,
-}
-
-impl Group<'_> {
-    /// A short title: `A / B`, `Name and N variants`, `First and N others`.
-    fn title(&self) -> String {
-        match self.members.as_slice() {
-            [] => self.file_title(),
-            [only] => self.single_title(only),
-            [first, second] => format!("{} / {}", first.name(), second.name()),
-            members => match self.majority_name() {
-                Some(name) => format!("{name} and {} variants", members.len() - 1),
-                None => format!("{} and {} others", members[0].name(), members.len() - 1),
-            },
-        }
-    }
-
-    /// A sentence-form title for the worklist.
-    fn sentence(&self) -> String {
-        match self.members.as_slice() {
-            [] => self.file_title(),
-            [only] => self.single_title(only),
-            [first, second] => format!("{} and {} are near copies", first.name(), second.name()),
-            members => match self.majority_name() {
-                Some(name) => format!("{name} is copied into {} variants", members.len()),
-                None => format!(
-                    "{} and {} others share copied code",
-                    members[0].name(),
-                    members.len() - 1
-                ),
-            },
-        }
-    }
-
-    fn single_title(&self, member: &Member) -> String {
-        format!(
-            "{} repeats one block {} times inside itself",
-            member.name(),
-            self.regions.len()
-        )
-    }
-
-    fn file_title(&self) -> String {
-        let paths: BTreeSet<&str> = self
-            .regions
-            .iter()
-            .map(|region| region.path.as_str())
-            .collect();
-        let first = paths.first().copied().unwrap_or_default();
-
-        match paths.len() {
-            0 | 1 => format!("Copied code in {first}"),
-            2 => format!("Copied code in {first} and 1 other file"),
-            more => format!("Copied code in {first} and {} other files", more - 1),
-        }
-    }
-
-    /// The most frequent bare name, when it covers at least half the members.
-    fn majority_name(&self) -> Option<&str> {
-        let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
-
-        for member in &self.members {
-            *counts.entry(member.name()).or_default() += 1;
-        }
-
-        counts
-            .into_iter()
-            .max_by_key(|&(name, seen)| (seen, Reverse(name)))
-            .filter(|&(_, seen)| seen * 2 >= self.members.len())
-            .map(|(name, _)| name)
-    }
-}
-
-type FunctionIndex<'a> = HashMap<&'a str, Vec<&'a Function>>;
-
-/// The functions an endpoint belongs to: its outermost listed functions.
-/// Without an index (comparisons carry no function list), every listed ID.
-fn endpoint_owners(
-    endpoint: &CloneEndpoint,
-    index: Option<&FunctionIndex<'_>>,
-) -> Vec<(String, Option<Member>)> {
-    if endpoint.functions.is_empty() {
-        return vec![(format!("file:{}", endpoint.path), None)];
-    }
-
-    let unresolved = |id: &String| {
-        let member = Member {
-            id: id.clone(),
-            path: endpoint.path.clone(),
-            line: endpoint.start.line,
-        };
-
-        (id.clone(), Some(member))
-    };
-    let Some(index) = index else {
-        return endpoint.functions.iter().map(unresolved).collect();
-    };
-
-    let mut resolved: Vec<&Function> = Vec::new();
-    let mut owners = Vec::new();
-
-    for id in &endpoint.functions {
-        let Some(candidates) = index.get(id.as_str()) else {
-            owners.push(unresolved(id));
-
-            continue;
-        };
-        let overlapping = candidates.iter().find(|function| {
-            function.path == endpoint.path
-                && function.start <= endpoint.end
-                && function.end >= endpoint.start
-        });
-
-        resolved.extend(overlapping.or(candidates.first()));
-    }
-
-    for function in &resolved {
-        let contained = resolved.iter().any(|outer| {
-            outer.id != function.id
-                && outer.path == function.path
-                && outer.start <= function.start
-                && function.end <= outer.end
-                && (outer.start, outer.end) != (function.start, function.end)
-        });
-
-        if !contained {
-            let member = Member {
-                id: function.id.clone(),
-                path: function.path.clone(),
-                line: function.start.line,
-            };
-
-            owners.push((function.id.clone(), Some(member)));
-        }
-    }
-
-    owners
-}
-
-/// Groups `clones` by shared owners: a union-find over every owner of both
-/// endpoints of every clone.
-fn group_clones<'a>(clones: &[&'a CodeClone], index: Option<&FunctionIndex<'_>>) -> Vec<Group<'a>> {
-    let mut owners = Owners::default();
-    let mut members: HashMap<usize, Member> = HashMap::new();
-    let mut anchors = Vec::with_capacity(clones.len());
-
-    for clone in clones {
-        let mut anchor = None;
-
-        for endpoint in &clone.endpoints {
-            for (key, member) in endpoint_owners(endpoint, index) {
-                let owner = owners.index(key);
-
-                if let Some(member) = member {
-                    members.entry(owner).or_insert(member);
-                }
-
-                match anchor {
-                    Some(anchor) => owners.join(anchor, owner),
-                    None => anchor = Some(owner),
-                }
-            }
-        }
-
-        anchors.push(anchor.unwrap_or_default());
-    }
-
-    let mut components: BTreeMap<usize, Vec<&CodeClone>> = BTreeMap::new();
-
-    for (clone, anchor) in clones.iter().zip(anchors) {
-        components
-            .entry(owners.find(anchor))
-            .or_default()
-            .push(*clone);
-    }
-
-    let mut grouped_members: HashMap<usize, Vec<Member>> = HashMap::new();
-
-    for (owner, member) in members {
-        grouped_members
-            .entry(owners.find(owner))
-            .or_default()
-            .push(member);
-    }
-
-    components
-        .into_iter()
-        .map(|(root, clones)| {
-            let mut members = grouped_members.remove(&root).unwrap_or_default();
-            members.sort_by(|left, right| {
-                (&left.path, left.line, &left.id).cmp(&(&right.path, right.line, &right.id))
-            });
-
-            let regions: BTreeSet<(&str, Position, Position)> = clones
-                .iter()
-                .flat_map(|clone| &clone.endpoints)
-                .map(|endpoint| (endpoint.path.as_str(), endpoint.start, endpoint.end))
-                .collect();
-            let copied_lines = covered_lines(
-                regions
-                    .iter()
-                    .map(|&(path, start, end)| (path, start.line, end.line)),
-            )
-            .values()
-            .sum();
-            let category = if clones
-                .iter()
-                .any(|clone| clone.category == Category::Production)
-            {
-                Category::Production
-            } else {
-                clones[0].category
-            };
-
-            Group {
-                category,
-                regions: regions
-                    .into_iter()
-                    .map(|(path, start, end)| Location {
-                        path: path.to_owned(),
-                        start,
-                        end,
-                    })
-                    .collect(),
-                clones,
-                members,
-                copied_lines,
-            }
-        })
-        .collect()
 }
 
 fn function_advice(function: &Function, threshold: u32) -> &'static str {
@@ -553,27 +236,6 @@ fn function_advice(function: &Function, threshold: u32) -> &'static str {
     }
 }
 
-fn group_advice(group: &Group<'_>) -> &'static str {
-    let paths: BTreeSet<&str> = group
-        .regions
-        .iter()
-        .map(|region| region.path.as_str())
-        .collect();
-    let directories: BTreeSet<&str> = paths.iter().map(|path| directory_of(path)).collect();
-
-    if group.members.len() == 1 {
-        "Loop or table-drive the repeated block."
-    } else if group.category == Category::Test {
-        "Use a table-driven test or a shared fixture."
-    } else if paths.len() == 1 {
-        "Extract one shared function in this file."
-    } else if directories.len() == 1 {
-        "Extract one shared function in this package."
-    } else {
-        "Keep one copy in a shared package and call it from the others."
-    }
-}
-
 fn finding_advice(rule: &str) -> Option<&'static str> {
     match rule {
         "redundant-boolean-return" => Some("Return the condition itself."),
@@ -582,7 +244,7 @@ fn finding_advice(rule: &str) -> Option<&'static str> {
     }
 }
 
-fn location_of(function: &Function) -> Location {
+pub(super) fn location_of(function: &Function) -> Location {
     Location {
         path: function.path.clone(),
         start: function.start,
@@ -590,7 +252,7 @@ fn location_of(function: &Function) -> Location {
     }
 }
 
-fn cyclomatic_words(function: &Function) -> String {
+pub(super) fn cyclomatic_words(function: &Function) -> String {
     format!("cyclomatic {}", function.cyclomatic)
 }
 
@@ -1149,194 +811,5 @@ fn function_item(function: &Function, threshold: u32, status: ReviewStatus) -> W
         ],
         locations: vec![location_of(function)],
         deferred: status == ReviewStatus::Deferred,
-    }
-}
-
-fn group_item(group: &Group<'_>, deferred: bool) -> WorkItem {
-    let places = group.regions.len();
-
-    WorkItem {
-        kind: WorkKind::Copied,
-        category: group.category,
-        size: group.copied_lines,
-        title: group.sentence(),
-        short_title: group.title(),
-        why: format!(
-            "{} lines are copied across {places} places.",
-            count(group.copied_lines)
-        ),
-        advice: Some(group_advice(group).to_owned()),
-        facts: vec![
-            Detail {
-                key: "Copied lines".to_owned(),
-                value: count(group.copied_lines),
-            },
-            Detail {
-                key: "Places".to_owned(),
-                value: places.to_string(),
-            },
-            Detail {
-                key: "Functions".to_owned(),
-                value: group.members.len().to_string(),
-            },
-        ],
-        locations: group.regions.clone(),
-        deferred,
-    }
-}
-
-/// Computes the human summary of `comparison`.
-#[must_use]
-pub fn summarize_comparison(comparison: &Comparison) -> ComparisonSummary {
-    let unmatched = comparison
-        .function_changes
-        .iter()
-        .map(|change| change.state)
-        .chain(comparison.clone_changes.iter().map(|change| change.state))
-        .chain(comparison.finding_changes.iter().map(|change| change.state))
-        .filter(|state| {
-            matches!(
-                state,
-                ChangeState::Ambiguous | ChangeState::Incompatible | ChangeState::Incomplete
-            )
-        })
-        .count();
-    let unmatched = u32::try_from(unmatched).unwrap_or(u32::MAX);
-
-    if !comparison.compatible || !comparison.complete {
-        let reason = if !comparison.reason.is_empty() {
-            comparison.reason.clone()
-        } else if !comparison.compatible {
-            "the reports are not comparable".to_owned()
-        } else {
-            "the reports are incomplete".to_owned()
-        };
-
-        return ComparisonSummary {
-            verdict: format!("No conclusion: {reason}"),
-            conclusive: false,
-            worse: Vec::new(),
-            better: Vec::new(),
-            unmatched,
-        };
-    }
-
-    let mut worse = Vec::new();
-    let mut better = Vec::new();
-
-    for finding in &comparison.new_findings {
-        worse.push(finding_entry(finding, "none", &finding.rule));
-    }
-
-    for finding in &comparison.resolved_findings {
-        better.push(finding_entry(finding, &finding.rule, "gone"));
-    }
-
-    for change in &comparison.function_changes {
-        let function_entry = |before: &str, after: &str, function: &Function| ChangeEntry {
-            kind: WorkKind::Complex,
-            title: function.name.clone(),
-            before: before.to_owned(),
-            after: after.to_owned(),
-            location: Some(location_of(function)),
-        };
-
-        match (change.state, &change.before, &change.after) {
-            (ChangeState::New, _, Some(after)) if after.high_complexity => {
-                worse.push(function_entry(
-                    "not present",
-                    &cyclomatic_words(after),
-                    after,
-                ));
-            }
-            (ChangeState::CrossedThreshold, Some(before), Some(after)) => {
-                worse.push(function_entry(
-                    &cyclomatic_words(before),
-                    &cyclomatic_words(after),
-                    after,
-                ));
-            }
-            (ChangeState::Matched, Some(before), Some(after))
-                if before.high_complexity
-                    && after.high_complexity
-                    && after.cyclomatic > before.cyclomatic =>
-            {
-                worse.push(function_entry(
-                    &cyclomatic_words(before),
-                    &cyclomatic_words(after),
-                    after,
-                ));
-            }
-            (ChangeState::ResolvedThreshold, Some(before), Some(after)) => {
-                better.push(function_entry(
-                    &cyclomatic_words(before),
-                    &cyclomatic_words(after),
-                    after,
-                ));
-            }
-            (ChangeState::DeletedFunction | ChangeState::SourceRemoved, Some(before), _)
-                if before.high_complexity =>
-            {
-                better.push(function_entry(&cyclomatic_words(before), "removed", before));
-            }
-            _ => {}
-        }
-    }
-
-    let added: Vec<&CodeClone> = comparison
-        .clone_changes
-        .iter()
-        .filter(|change| change.state == ChangeState::New)
-        .filter_map(|change| change.after.as_ref())
-        .collect();
-    let removed: Vec<&CodeClone> = comparison
-        .clone_changes
-        .iter()
-        .filter(|change| change.state == ChangeState::Removed)
-        .filter_map(|change| change.before.as_ref())
-        .collect();
-
-    for group in group_clones(&added, None) {
-        let lines = format!("{} copied lines", count(group.copied_lines));
-
-        worse.push(group_entry(&group, "not present", &lines));
-    }
-
-    for group in group_clones(&removed, None) {
-        let lines = format!("{} copied lines", count(group.copied_lines));
-
-        better.push(group_entry(&group, &lines, "gone"));
-    }
-
-    ComparisonSummary {
-        verdict: format!("{} got worse, {} improved", worse.len(), better.len()),
-        conclusive: true,
-        worse,
-        better,
-        unmatched,
-    }
-}
-
-fn finding_entry(finding: &Finding, before: &str, after: &str) -> ChangeEntry {
-    ChangeEntry {
-        kind: WorkKind::Finding,
-        title: finding.message.clone(),
-        before: before.to_owned(),
-        after: after.to_owned(),
-        location: Some(Location {
-            path: finding.path.clone(),
-            start: finding.start,
-            end: finding.end,
-        }),
-    }
-}
-
-fn group_entry(group: &Group<'_>, before: &str, after: &str) -> ChangeEntry {
-    ChangeEntry {
-        kind: WorkKind::Copied,
-        title: group.title(),
-        before: before.to_owned(),
-        after: after.to_owned(),
-        location: group.regions.first().cloned(),
     }
 }

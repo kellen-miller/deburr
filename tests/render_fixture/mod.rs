@@ -10,7 +10,7 @@ use deburr::report::{
 };
 use serde_json::json;
 
-pub struct FailingWriter;
+pub(crate) struct FailingWriter;
 
 impl Write for FailingWriter {
     fn write(&mut self, _buf: &[u8]) -> io::Result<usize> {
@@ -22,7 +22,7 @@ impl Write for FailingWriter {
     }
 }
 
-pub fn report_in(report: &Report, format: Format) -> String {
+pub(crate) fn report_in(report: &Report, format: Format) -> String {
     let mut out = Vec::new();
     render::render_report(
         report,
@@ -36,7 +36,7 @@ pub fn report_in(report: &Report, format: Format) -> String {
     String::from_utf8(out).expect("utf-8 output")
 }
 
-pub fn comparison_in(comparison: &Comparison, format: Format) -> String {
+pub(crate) fn comparison_in(comparison: &Comparison, format: Format) -> String {
     let mut out = Vec::new();
     render::render_comparison(
         comparison,
@@ -50,7 +50,7 @@ pub fn comparison_in(comparison: &Comparison, format: Format) -> String {
     String::from_utf8(out).expect("utf-8 output")
 }
 
-pub fn assert_shows(format: Format, output: &str, facts: &[&str]) {
+pub(crate) fn assert_shows(format: Format, output: &str, facts: &[&str]) {
     for fact in facts {
         assert!(
             output.contains(fact),
@@ -62,7 +62,7 @@ pub fn assert_shows(format: Format, output: &str, facts: &[&str]) {
 
 /// `sample_report` with `count` ordinary functions, `F00` the lightest and
 /// `F{count-1}` the heaviest.
-pub fn sample_report_with_functions(count: u32) -> Report {
+pub(crate) fn sample_report_with_functions(count: u32) -> Report {
     let mut report = sample_report();
     report.functions = (0..count)
         .map(|index| function(index, f64::from(index), false))
@@ -95,7 +95,7 @@ fn function(index: u32, mass: f64, high_complexity: bool) -> Function {
 /// A report that exercises every section: a hotspot with a hostile name, a
 /// finding with details, a parse failure, a measured clone, and a ledger with
 /// a retained decision and a stale item.
-pub fn sample_report() -> Report {
+pub(crate) fn sample_report() -> Report {
     let mut hostile = function(0, 24.0, true);
     hostile.name = "<script>alert(1)</script>".to_owned();
     hostile.id = "pkg/main.go::<script>".to_owned();
@@ -211,7 +211,7 @@ fn ledger() -> deburr::report::ReviewLedger {
     .expect("ledger")
 }
 
-pub fn sample_comparison() -> Comparison {
+pub(crate) fn sample_comparison() -> Comparison {
     let before = sample_report();
     let mut after = sample_report();
     after.provenance.source.commit = "def456".to_owned();
