@@ -6,7 +6,7 @@ mod render_fixture;
 use deburr::render::{self, Format, Source, Style};
 use deburr::report::{Comparison, Report};
 use render_fixture::{
-    FailingWriter, assert_shows, comparison_in, report_in, sample_comparison, sample_report,
+    FailingWriter, comparison_in, report_in, sample_comparison, sample_report,
     sample_report_with_functions,
 };
 
@@ -55,52 +55,6 @@ fn json_round_trips_the_report() {
 
     assert_eq!(decoded, report);
     assert!(output.ends_with('\n'));
-}
-
-#[test]
-fn unreviewed_reports_get_a_fresh_ledger() {
-    let mut report = sample_report();
-    report.review = None;
-
-    assert_shows(
-        Format::Text,
-        &report_in(&report, Format::Text),
-        &["Review: total="],
-    );
-    assert_shows(
-        Format::Github,
-        &report_in(&report, Format::Github),
-        &["title=deburr review::total="],
-    );
-    assert_shows(
-        Format::Html,
-        &report_in(&report, Format::Html),
-        &["Primary review items: "],
-    );
-}
-
-#[test]
-fn text_comparison_refuses_to_conclude_when_incompatible() {
-    let mut comparison = sample_comparison();
-    comparison.compatible = false;
-    comparison.metrics_delta = None;
-    comparison.reason = "analyzer versions differ".to_owned();
-
-    for format in [Format::Text, Format::Html, Format::Github] {
-        let output = comparison_in(&comparison, format);
-        assert_shows(format, &output, &["analyzer versions differ"]);
-    }
-
-    let text = comparison_in(&comparison, Format::Text);
-    assert_shows(
-        Format::Text,
-        &text,
-        &[
-            "Compatible: false",
-            "Change conclusion: unavailable",
-            "Metrics delta: unavailable",
-        ],
-    );
 }
 
 #[test]

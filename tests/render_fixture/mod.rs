@@ -50,16 +50,6 @@ pub(crate) fn comparison_in(comparison: &Comparison, format: Format) -> String {
     String::from_utf8(out).expect("utf-8 output")
 }
 
-pub(crate) fn assert_shows(format: Format, output: &str, facts: &[&str]) {
-    for fact in facts {
-        assert!(
-            output.contains(fact),
-            "{} output is missing {fact:?}:\n{output}",
-            format.name()
-        );
-    }
-}
-
 /// `sample_report` with `count` ordinary functions, `F00` the lightest and
 /// `F{count-1}` the heaviest.
 pub(crate) fn sample_report_with_functions(count: u32) -> Report {

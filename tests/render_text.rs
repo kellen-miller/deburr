@@ -4,9 +4,19 @@ mod render_fixture;
 
 use deburr::render::{self, Format, Source, Style};
 use render_fixture::{
-    FailingWriter, assert_shows, comparison_in, report_in, sample_comparison, sample_report,
+    FailingWriter, comparison_in, report_in, sample_comparison, sample_report,
     sample_report_with_functions,
 };
+
+fn assert_shows(format: Format, output: &str, facts: &[&str]) {
+    for fact in facts {
+        assert!(
+            output.contains(fact),
+            "{} output is missing {fact:?}:\n{output}",
+            format.name()
+        );
+    }
+}
 
 #[test]
 fn text_reports_writer_errors() {
