@@ -11,6 +11,7 @@ use tree_sitter::{Node, Parser, Point};
 use crate::report::Position;
 
 pub mod go;
+pub mod rust;
 pub mod typescript;
 
 /// Source languages deburr can parse.
@@ -19,6 +20,7 @@ pub enum Language {
     Go,
     TypeScript,
     Tsx,
+    Rust,
 }
 
 /// Everything the engine needs to know about one language: node-kind tables
@@ -30,8 +32,19 @@ pub struct LanguageRules {
     pub function_kinds: &'static [&'static str],
     /// Node kinds that each add one decision point.
     pub decision_kinds: &'static [&'static str],
+    /// Extra decision points a node adds beyond `decision_kinds`, for shapes
+    /// a kind alone cannot say (a match arm that is not the catch-all, a
+    /// `let ... else`). `None` when the kind table is enough.
+    pub decision_weight: Option<fn(Node<'_>, &[u8]) -> u32>,
+    /// The byte ranges of test items that live inside production files
+    /// (Rust's `#[cfg(test)]` items and `#[test]` functions), sorted and
+    /// disjoint. `None` when a language's tests only live in test files.
+    pub test_regions: Option<TestRegions>,
     /// Node kinds that deepen nesting inside their subtree.
     pub nesting_kinds: &'static [&'static str],
+    /// How an `else if` chain nests; `None` when a chained branch nests like
+    /// any other branch.
+    pub chained_branch: Option<ChainedBranch>,
     /// The node kind of a binary expression, whose `operator` field is
     /// checked against `short_circuit_operators`.
     pub binary_kind: &'static str,
@@ -44,12 +57,26 @@ pub struct LanguageRules {
     pub statements: StatementRules,
     /// Structural signals beyond nesting; `None` when the language has none.
     pub signals: Option<SignalRules>,
+    /// Ownership and panic signals (Rust); `None` when the language has none.
+    pub ownership: Option<OwnershipRules>,
     pub findings: FindingRules,
     /// The language's own validity check, for what tree-sitter accepts but
     /// the language's reference parser rejects. Returns the start of the
     /// first offending node. Runs only when the tree has no error nodes.
     pub structure_problem: Option<StructureCheck>,
 }
+
+/// A branch that continues its parent's chain instead of nesting inside it:
+/// the `if` inside an `else` clause stays at the depth of the `if` that heads
+/// the chain.
+#[derive(Debug)]
+pub struct ChainedBranch {
+    pub clause_kind: &'static str,
+    pub branch_kind: &'static str,
+}
+
+/// Finds the byte ranges of a file's inline test items, sorted and disjoint.
+pub type TestRegions = fn(Node<'_>, &[u8]) -> Vec<Range<usize>>;
 
 /// Finds the start of the first node a language's reference parser rejects.
 pub type StructureCheck = fn(Node<'_>, &[u8]) -> Option<Point>;
@@ -105,7 +132,7 @@ pub enum UnitNaming {
 /// Where statements live in the tree.
 #[derive(Debug)]
 pub struct StatementRules {
-    pub comment_kind: &'static str,
+    pub comment_kinds: &'static [&'static str],
     /// A braced body.
     pub block_kind: &'static str,
     /// The child of a block that holds its statements, when it has one (Go).
@@ -152,6 +179,33 @@ pub struct SignalRules {
     pub testing_methods: &'static [&'static str],
 }
 
+/// A method call by name and argument count: `.clone()` is `clone` with 0.
+#[derive(Debug)]
+pub struct CallShape {
+    pub method: &'static str,
+    pub arguments: usize,
+}
+
+/// The shapes behind `clone_like_calls`, `unwrap_like_calls`, `panic_macros`,
+/// and `unsafe_blocks`.
+#[derive(Debug)]
+pub struct OwnershipRules {
+    pub call_kind: &'static str,
+    /// The kind of a call's `function` that makes it a method call; its
+    /// `field` is the method name.
+    pub method_kind: &'static str,
+    /// A call's `function` of this kind wraps the real callee in its own
+    /// `function` field (turbofish: `x.cloned::<u8>()`); it is unwrapped
+    /// before `method_kind` is checked.
+    pub generic_callee_kind: &'static str,
+    pub clone_like: &'static [CallShape],
+    pub unwrap_like: &'static [CallShape],
+    pub macro_kind: &'static str,
+    /// Macro names, compared with the last segment of the macro's path.
+    pub panic_macros: &'static [&'static str],
+    pub unsafe_kind: &'static str,
+}
+
 /// The shapes behind the two findings.
 #[derive(Debug)]
 pub struct FindingRules {
@@ -175,13 +229,17 @@ pub enum BranchShape {
         /// Whether a function declares exactly one unnamed `bool` result.
         returns_plain_bool: fn(Node<'_>, &[u8]) -> bool,
     },
-    /// TypeScript. The other branch is the `else` or, with none, the next
-    /// statement in the same block. Either finding may fire in any function,
-    /// and at most one fires per `if`.
+    /// TypeScript and Rust. The other branch is the `else` or, with none, the
+    /// next statement in the same block. Either finding may fire in any
+    /// function, and at most one fires per `if`.
     Conditional {
         else_kind: &'static str,
         /// The node around an `if` condition.
         parenthesized_kind: &'static str,
+        /// The node that wraps an expression used as a statement (Rust's
+        /// `expression_statement`), which a branch's lone `return` or `if`
+        /// sits in.
+        statement_kind: Option<&'static str>,
     },
 }
 
@@ -192,6 +250,7 @@ impl Language {
         match self {
             Self::Go => &go::RULES,
             Self::TypeScript | Self::Tsx => &typescript::RULES,
+            Self::Rust => &rust::RULES,
         }
     }
 
@@ -200,6 +259,7 @@ impl Language {
             Self::Go => tree_sitter_go::LANGUAGE.into(),
             Self::TypeScript => tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
             Self::Tsx => tree_sitter_typescript::LANGUAGE_TSX.into(),
+            Self::Rust => tree_sitter_rust::LANGUAGE.into(),
         }
     }
 }
@@ -221,6 +281,30 @@ impl Token {
     pub fn is_terminator(&self) -> bool {
         self.bytes.is_empty()
     }
+
+    /// Whether this token lies in one of `regions` (sorted, disjoint). A
+    /// terminator sits at the end of the statement it closes, so it belongs
+    /// to a region that ends exactly there, not to one that starts there.
+    #[must_use]
+    pub fn within(&self, regions: &[Range<usize>]) -> bool {
+        let offset = if self.is_terminator() {
+            self.bytes.start.saturating_sub(1)
+        } else {
+            self.bytes.start
+        };
+
+        in_regions(regions, offset)
+    }
+}
+
+/// Whether `offset` lies in one of `regions` (sorted, disjoint).
+#[must_use]
+pub fn in_regions(regions: &[Range<usize>], offset: usize) -> bool {
+    let index = regions.partition_point(|region| region.end <= offset);
+
+    regions
+        .get(index)
+        .is_some_and(|region| region.start <= offset)
 }
 
 /// A parsed file.
@@ -252,10 +336,22 @@ impl Syntax {
     /// line.
     #[must_use]
     pub fn code_lines(&self) -> Vec<bool> {
+        self.code_lines_where(|_| true)
+    }
+
+    /// Like [`Syntax::code_lines`], counting only the tokens inside `regions`
+    /// (sorted, disjoint byte ranges), so a line that holds code from both
+    /// inside and outside a region is marked.
+    #[must_use]
+    pub fn region_code_lines(&self, regions: &[Range<usize>]) -> Vec<bool> {
+        self.code_lines_where(|token| token.within(regions))
+    }
+
+    fn code_lines_where(&self, keep: impl Fn(&Token) -> bool) -> Vec<bool> {
         let mut code = vec![false; line_count(&self.source)];
         let real = self.tokens.iter().filter(|token| !token.is_terminator());
 
-        for token in real.chain(&self.semicolons) {
+        for token in real.chain(&self.semicolons).filter(|token| keep(token)) {
             let first = token.start.line.saturating_sub(1) as usize;
             let last = (token.end.line as usize).min(code.len());
 

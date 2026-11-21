@@ -10,6 +10,7 @@
 //! report order, so repeated keys (several Go `init` functions in one file,
 //! say) are compared one-to-one and never collapsed.
 
+use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 
@@ -211,6 +212,235 @@ fn pick(object: &Value, names: &[&str]) -> Fields {
         .collect()
 }
 
+fn is_rust_entry(entry: &Value) -> bool {
+    entry["path"]
+        .as_str()
+        .is_some_and(|path| path.ends_with(".rs"))
+}
+
+/// Subtracts one removed file from the coverage totals: the overall row and
+/// the row of its category lose it under `discovered` and its status.
+fn remove_from_coverage(coverage: &mut Value, file: &Value) {
+    let status = match file["status"].as_str().unwrap_or_default() {
+        "analyzed" => "analyzed",
+        "excluded" => "excluded",
+        "unsupported" => "unsupported",
+        "read_error" => "read_errors",
+        "parse_error" => "parse_errors",
+        _ => "",
+    };
+    let category = file["category"].as_str().unwrap_or_default();
+
+    for field in ["discovered", status] {
+        if field.is_empty() {
+            continue;
+        }
+
+        decrement(&mut coverage[field]);
+
+        if let Some(by_category) = coverage["by_category"].as_array_mut() {
+            for row in by_category
+                .iter_mut()
+                .filter(|row| row["category"] == category)
+            {
+                decrement(&mut row[field]);
+            }
+        }
+    }
+}
+
+fn decrement(count: &mut Value) {
+    if let Some(value) = count.as_i64() {
+        *count = Value::from(value - 1);
+    }
+}
+
+/// What the removed Rust functions contributed to one metrics bucket.
+#[derive(Default)]
+struct RemovedTotals {
+    functions: i64,
+    cyclomatic: i64,
+    max_nesting: i64,
+    mass: f64,
+    high_complexity_functions: i64,
+    high_complexity_mass: f64,
+}
+
+/// The code lines a removed analyzed file contributed to `bucket`. A
+/// production file's inline-test lines were counted in the test bucket, so
+/// they leave test, and only the rest leaves production.
+fn bucket_lines(file: &Value, bucket: &str) -> i64 {
+    let code_lines = file["code_lines"].as_i64().unwrap_or_default();
+    let inline_test = file["inline_test_code_lines"].as_i64().unwrap_or_default();
+
+    match (bucket, file["category"].as_str().unwrap_or_default()) {
+        ("all", _) | ("test", "test") => code_lines,
+        ("production", "production") => code_lines - inline_test,
+        ("test", "production") => inline_test,
+        _ => 0,
+    }
+}
+
+/// Rewrites the three metrics buckets of `report` for a report whose `.rs`
+/// files and functions were removed. The report's own figures stay under
+/// test: code lines lose the removed analyzed files' share of each bucket,
+/// and counts and sums lose the removed functions' contributions, so a wrong
+/// Go or TypeScript aggregate still reaches the diff.
+///
+/// `max_nesting` cannot be subtracted. It is kept when the removed functions
+/// cannot account for it, recomputed from the remaining functions when the
+/// removed ones alone could have set it, and projected as null (a certain
+/// difference) when it is below a removed function's own nesting, which no
+/// consistent report produces, or when the remaining functions nest deeper.
+/// The high complexity share is derived from the residual mass figures only
+/// when the reported share matched the reported masses; otherwise it is kept.
+fn recompute_metrics(report: &mut Value, files: &[Value], functions: &[Value]) {
+    for bucket in ["all", "production", "test"] {
+        let in_bucket = |function: &&Value| {
+            bucket == "all" || function["category"].as_str().unwrap_or_default() == bucket
+        };
+        let removed_lines: i64 = files
+            .iter()
+            .filter(|file| file["status"] == "analyzed")
+            .map(|file| bucket_lines(file, bucket))
+            .sum();
+        let mut gone = RemovedTotals::default();
+
+        for function in functions.iter().filter(in_bucket) {
+            let mass = function["mass"].as_f64().unwrap_or_default();
+
+            gone.functions += 1;
+            gone.cyclomatic += function["cyclomatic"].as_i64().unwrap_or_default();
+            gone.max_nesting = gone
+                .max_nesting
+                .max(function["max_nesting"].as_i64().unwrap_or_default());
+            gone.mass += mass;
+
+            if function["high_complexity"].as_bool().unwrap_or_default() {
+                gone.high_complexity_functions += 1;
+                gone.high_complexity_mass += mass;
+            }
+        }
+
+        let remaining_max_nesting = report["functions"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(in_bucket)
+            .map(|function| function["max_nesting"].as_i64().unwrap_or_default())
+            .max()
+            .unwrap_or_default();
+        let metrics = &mut report["metrics"][bucket];
+        // Whether the reported share matched the reported masses before
+        // projection; a share that did not is kept, so it reaches the diff.
+        let share_consistent = match (
+            metrics["mass"].as_f64(),
+            metrics["high_complexity_mass"].as_f64(),
+            metrics["high_complexity_mass_share"].as_f64(),
+        ) {
+            (Some(mass), Some(high), Some(share)) if mass != 0.0 => {
+                (high / mass - share).abs() < 1e-9
+            }
+            (Some(mass), _, None) => mass == 0.0,
+            _ => false,
+        };
+
+        if let Some(lines) = metrics["code_lines"].as_i64() {
+            metrics["code_lines"] = Value::from(lines - removed_lines);
+        }
+
+        if gone.functions == 0 {
+            continue;
+        }
+
+        subtract_int(&mut metrics["functions"], gone.functions);
+        subtract_int(&mut metrics["cyclomatic"], gone.cyclomatic);
+        subtract_int(
+            &mut metrics["high_complexity_functions"],
+            gone.high_complexity_functions,
+        );
+        subtract_float(&mut metrics["mass"], gone.mass);
+        subtract_float(
+            &mut metrics["high_complexity_mass"],
+            gone.high_complexity_mass,
+        );
+
+        if let Some(reported) = metrics["max_nesting"].as_i64() {
+            metrics["max_nesting"] = match reported.cmp(&gone.max_nesting) {
+                Ordering::Less => Value::Null,
+                // The remaining functions nest deeper than the reported
+                // maximum, so the report underreported it.
+                Ordering::Equal if remaining_max_nesting > reported => Value::Null,
+                Ordering::Equal => Value::from(remaining_max_nesting),
+                Ordering::Greater => Value::from(reported),
+            };
+        }
+
+        if !share_consistent {
+            continue;
+        }
+
+        metrics["high_complexity_mass_share"] = match (
+            metrics["mass"].as_f64(),
+            metrics["high_complexity_mass"].as_f64(),
+        ) {
+            (Some(mass), Some(high)) if mass != 0.0 => Value::from(high / mass),
+            _ => Value::Null,
+        };
+    }
+}
+
+fn subtract_int(total: &mut Value, removed: i64) {
+    if let Some(value) = total.as_i64() {
+        *total = Value::from(value - removed);
+    }
+}
+
+fn subtract_float(total: &mut Value, removed: f64) {
+    if let Some(value) = total.as_f64() {
+        *total = Value::from(value - removed);
+    }
+}
+
+/// The report without its `.rs` files, functions, and findings, or `None`
+/// when it has none. The Go version never analyzed Rust (it reports `.rs`
+/// as unsupported), so those entries can only differ; the coverage and
+/// metrics totals lose their share too.
+fn without_rust(report: &Value) -> Option<Value> {
+    if !report["files"].as_array()?.iter().any(is_rust_entry) {
+        return None;
+    }
+
+    let mut filtered = report.clone();
+    let removed: Vec<Value> = report["files"]
+        .as_array()?
+        .iter()
+        .filter(|file| is_rust_entry(file))
+        .cloned()
+        .collect();
+    let removed_functions: Vec<Value> = report["functions"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|function| is_rust_entry(function))
+        .cloned()
+        .collect();
+
+    for section in ["files", "functions", "findings"] {
+        if let Some(entries) = filtered[section].as_array_mut() {
+            entries.retain(|entry| !is_rust_entry(entry));
+        }
+    }
+
+    for file in &removed {
+        remove_from_coverage(&mut filtered["coverage"], file);
+    }
+
+    recompute_metrics(&mut filtered, &removed, &removed_functions);
+
+    Some(filtered)
+}
+
 /// Reduces a JSON audit report (Go or Rust) to its projection.
 ///
 /// Fields projected today: every file's path, category, status, lines, and
@@ -218,8 +448,11 @@ fn pick(object: &Value, names: &[&str]) -> Fields {
 /// bucket's code lines and function-derived totals; and each function's
 /// range, SLOC, cyclomatic, nesting, mass, signals, and flags, keyed by
 /// path, name, and occurrence index; and each finding's range, owner, and
-/// ambiguity, keyed by path, rule, and occurrence index.
+/// ambiguity, keyed by path, rule, and occurrence index. `.rs` files and
+/// everything measured in them are left out first (see [`without_rust`]).
 pub(crate) fn project(report: &Value) -> Projection {
+    let filtered = without_rust(report);
+    let report = filtered.as_ref().unwrap_or(report);
     let mut projection = Projection::default();
 
     for file in report["files"].as_array().into_iter().flatten() {
@@ -460,145 +693,5 @@ pub(crate) struct AcceptedList {
 }
 
 #[cfg(test)]
-mod tests {
-    use serde_json::json;
-
-    use super::*;
-
-    fn report(code_lines: i64, status: &str) -> Value {
-        json!({
-            "files": [
-                {"path": "a.go", "category": "production", "status": status, "lines": 10, "code_lines": code_lines},
-                {"path": "a.go", "category": "test", "status": "analyzed", "lines": 1, "code_lines": 1},
-            ],
-            "coverage": {"discovered": 2, "by_category": []},
-            "metrics": {"all": {"code_lines": code_lines}},
-        })
-    }
-
-    #[test]
-    fn repeated_keys_are_compared_one_to_one() {
-        let projection = project(&report(5, "analyzed"));
-
-        assert_eq!(projection.len("files"), 2);
-        assert!(projection.sections["files"].contains_key("a.go#1"));
-        assert!(projection.sections["files"].contains_key("a.go#2"));
-    }
-
-    #[test]
-    fn diff_names_the_differing_field() {
-        let go = project(&report(5, "analyzed"));
-        let rust = project(&report(4, "parse_error"));
-        let differences = diff(&go, &rust);
-
-        assert!(
-            differences.iter().any(|d| d.key == "a.go#1"
-                && d.field == "code_lines"
-                && d.go == "5"
-                && d.rust == "4")
-        );
-        assert!(
-            differences
-                .iter()
-                .any(|d| d.key == "a.go#1" && d.field == "status")
-        );
-        assert!(diff(&go, &go).is_empty());
-    }
-
-    #[test]
-    fn findings_project_range_owner_and_occurrence() {
-        let finding = |line: i64, owner: &str| {
-            json!({
-                "path": "a.go",
-                "rule": "duplicate-branches",
-                "start": {"line": line, "column": 2},
-                "end": {"line": line + 4, "column": 2},
-                "details": [
-                    {"key": "owner", "value": owner},
-                    {"key": "candidate_only", "value": "true"},
-                ],
-            })
-        };
-        let go = project(&json!({"findings": [finding(3, "F"), finding(9, "G")]}));
-        let rust = project(&json!({"findings": [finding(3, "F"), finding(10, "G")]}));
-        let differences = diff(&go, &rust);
-
-        assert_eq!(go.len("findings"), 2);
-        assert!(go.sections["findings"].contains_key("a.go::duplicate-branches#2"));
-        assert!(differences.iter().all(|d| d.section == "findings"));
-        assert!(
-            differences
-                .iter()
-                .any(|d| d.key == "a.go::duplicate-branches#2" && d.field == "start_line")
-        );
-        assert!(!differences.iter().any(|d| d.field == "owner"));
-    }
-
-    #[test]
-    fn anonymous_digests_are_masked_wherever_they_appear() {
-        let digest = "ab".repeat(32);
-
-        assert_eq!(mask_anonymous_digests(&format!("anon-{digest}")), "anon-*");
-        assert_eq!(
-            mask_anonymous_digests(&format!("outer.anon-{digest}.anon-{digest}")),
-            "outer.anon-*.anon-*"
-        );
-        // Shorter hex runs are ordinary names, as is `anon-` with no digits.
-        assert_eq!(mask_anonymous_digests("anon-abc"), "anon-abc");
-        assert_eq!(mask_anonymous_digests("anon-"), "anon-");
-        assert_eq!(mask_anonymous_digests("outer."), "outer.");
-    }
-
-    #[test]
-    fn stored_projection_round_trips() {
-        let original = project(&report(5, "analyzed"));
-        let stored = original.to_json();
-        let restored = Projection::from_json(&stored).expect("decode stored projection");
-
-        assert!(diff(&original, &restored).is_empty());
-        assert_eq!(restored.len("files"), 2);
-        assert_eq!(restored.to_json(), stored);
-        assert!(Projection::from_json(&json!({"bogus": {}})).is_err());
-        assert!(Projection::from_json(&json!({"files": []})).is_err());
-    }
-
-    #[test]
-    fn missing_entries_are_reported() {
-        let go = project(&report(5, "analyzed"));
-        let mut rust = project(&report(5, "analyzed"));
-        rust.sections
-            .get_mut("files")
-            .map(|files| files.remove("a.go#2"));
-
-        let differences = diff(&go, &rust);
-
-        assert_eq!(differences.len(), 1);
-        assert_eq!(differences[0].field, "<entry>");
-        assert_eq!(differences[0].rust, "missing");
-    }
-
-    #[test]
-    fn floats_compare_with_tolerance() {
-        assert!(Scalar::Float(1.0).equivalent(&Scalar::Float(1.0 + 1e-12)));
-        assert!(Scalar::Int(8).equivalent(&Scalar::Float(8.0)));
-        assert!(!Scalar::Float(1.0).equivalent(&Scalar::Float(1.1)));
-    }
-
-    #[test]
-    fn accepted_entries_cover_exactly_one_field() {
-        let accepted = Accepted {
-            section: "files".into(),
-            key: "a.go#1".into(),
-            field: "code_lines".into(),
-            reason: "test".into(),
-        };
-        let go = project(&report(5, "analyzed"));
-        let rust = project(&report(4, "parse_error"));
-        let differences = diff(&go, &rust);
-
-        let covered: Vec<&Difference> = differences.iter().filter(|d| accepted.covers(d)).collect();
-
-        assert_eq!(covered.len(), 1);
-        assert!(differences.len() > 1);
-    }
-}
+#[path = "projection/tests.rs"]
+mod tests;

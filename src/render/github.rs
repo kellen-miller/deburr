@@ -195,7 +195,7 @@ pub fn report(report: &Report, out: &mut dyn Write) -> io::Result<()> {
             Some(span),
             "deburr function",
             &format!(
-                "{} sloc={} cyclomatic={} nesting={} mass={:.6} flat_guards={} field_mappings={} nested_branches={} assertion_like_calls={} identity_ambiguous={}",
+                "{} sloc={} cyclomatic={} nesting={} mass={:.6} flat_guards={} field_mappings={} nested_branches={} assertion_like_calls={} clone_like_calls={} unwrap_like_calls={} panic_macros={} unsafe_blocks={} identity_ambiguous={}",
                 function.name,
                 function.sloc,
                 function.cyclomatic,
@@ -205,6 +205,10 @@ pub fn report(report: &Report, out: &mut dyn Write) -> io::Result<()> {
                 signals.field_mappings,
                 signals.nested_branches,
                 signals.assertion_like_calls,
+                signals.clone_like_calls,
+                signals.unwrap_like_calls,
+                signals.panic_macros,
+                signals.unsafe_blocks,
                 function.identity_ambiguous,
             ),
         )?;

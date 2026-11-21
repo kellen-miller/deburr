@@ -200,7 +200,7 @@ pub(crate) fn function_text(function: &Function) -> String {
     let signals = &function.structural_signals;
 
     format!(
-        "{} name={} sloc={} cyclomatic={} nesting={} mass={:.6} high_complexity={} flat_guards={} field_mappings={} nested_branches={} assertion_like_calls={} ambiguous={}",
+        "{} name={} sloc={} cyclomatic={} nesting={} mass={:.6} high_complexity={} flat_guards={} field_mappings={} nested_branches={} assertion_like_calls={} clone_like_calls={} unwrap_like_calls={} panic_macros={} unsafe_blocks={} ambiguous={}",
         location(&function.path, function.start, function.end),
         function.name,
         function.sloc,
@@ -212,6 +212,10 @@ pub(crate) fn function_text(function: &Function) -> String {
         signals.field_mappings,
         signals.nested_branches,
         signals.assertion_like_calls,
+        signals.clone_like_calls,
+        signals.unwrap_like_calls,
+        signals.panic_macros,
+        signals.unsafe_blocks,
         function.identity_ambiguous,
     )
 }

@@ -54,7 +54,8 @@ fn function(index: u32, mass: f64, high_complexity: bool) -> Function {
         "category": "production",
         "name": format!("F{index:02}"),
         "structural_signals": {
-            "flat_guards": 1, "field_mappings": 2, "nested_branches": 3, "assertion_like_calls": 4
+            "flat_guards": 1, "field_mappings": 2, "nested_branches": 3, "assertion_like_calls": 4,
+            "clone_like_calls": 5, "unwrap_like_calls": 6, "panic_macros": 7, "unsafe_blocks": 8
         },
         "start": { "line": index + 1, "column": 1 },
         "end": { "line": index + 5, "column": 2 },
@@ -103,12 +104,13 @@ fn sample_report() -> Report {
             "build": { "version": "1.0.0-test" }
         },
         "analyzer": { "id": "deburr", "version": "1.0.0" },
-        "schema_version": "3",
+        "schema_version": "4",
         "files": [
             { "path": "main.go", "category": "production", "status": "analyzed",
-              "bytes": 120, "lines": 12, "code_lines": 9 },
+              "bytes": 120, "lines": 12, "code_lines": 9, "inline_test_code_lines": 0 },
             { "path": "broken,file.go", "category": "production", "status": "parse_error",
-              "error": "syntax error at 3:5", "bytes": 10, "lines": 2, "code_lines": 1 }
+              "error": "syntax error at 3:5", "bytes": 10, "lines": 2, "code_lines": 1,
+              "inline_test_code_lines": 0 }
         ],
         "functions": [],
         "findings": [{
@@ -194,7 +196,7 @@ fn text_shows_every_report_fact() {
         Format::Text,
         &output,
         &[
-            "schema 3",
+            "schema 4",
             "Analyzer: deburr 1.0.0",
             "source_commit=abc123",
             "source_dirty=true",
@@ -209,7 +211,7 @@ fn text_shows_every_report_fact() {
             "Source failures (1)",
             "broken,file.go [parse_error] syntax error at 3:5",
             "Production hotspots (2 of 2)",
-            "main.go:1:1-5:2 <script>alert(1)</script> [production] sloc=4 cyclomatic=12 nesting=2 mass=24.000000 high_complexity=true flat_guards=1 field_mappings=2 nested_branches=3 assertion_like_calls=4",
+            "main.go:1:1-5:2 <script>alert(1)</script> [production] sloc=4 cyclomatic=12 nesting=2 mass=24.000000 high_complexity=true flat_guards=1 field_mappings=2 nested_branches=3 assertion_like_calls=4 clone_like_calls=5 unwrap_like_calls=6 panic_macros=7 unsafe_blocks=8",
             "Test hotspots (0 of 0)",
             "Findings (1)",
             "main.go:4:2-9:3 [review] duplicate-branches: if branches have identical syntax",
@@ -283,7 +285,7 @@ fn html_shows_every_report_fact_and_escapes_values() {
         Format::Html,
         &output,
         &[
-            "Schema <code>3</code>",
+            "Schema <code>4</code>",
             "deburr 1.0.0",
             "source_commit=abc123",
             "source_manifest_digest=sha256:manifest",
@@ -300,7 +302,7 @@ fn html_shows_every_report_fact_and_escapes_values() {
             "Primary review items: 3",
             "unreviewed=2, refactored=0, retained=1, deferred=0, stale=1",
             "main.go:1:1-5:2",
-            "sloc=4 cyclomatic=12 max_nesting=2 mass=24.000000 flat_guards=1 field_mappings=2 nested_branches=3 assertion_like_calls=4",
+            "sloc=4 cyclomatic=12 max_nesting=2 mass=24.000000 flat_guards=1 field_mappings=2 nested_branches=3 assertion_like_calls=4 clone_like_calls=5 unwrap_like_calls=6 panic_macros=7 unsafe_blocks=8",
             "duplicate-branches",
             "if branches have identical syntax",
             "main.go:4:2-9:3",
@@ -382,7 +384,7 @@ fn github_shows_every_report_fact() {
             "::error file=broken%2Cfile.go,title=deburr analysis::syntax error at 3:5",
             "::notice title=deburr duplication::status=measured,min_tokens=80,min_lines=8",
             "production: 25.00%25 duplication (10 of 40 code lines across 2 files)",
-            "::notice file=main.go,line=1,endLine=5,title=deburr function::<script>alert(1)</script> sloc=4 cyclomatic=12 nesting=2 mass=24.000000 flat_guards=1 field_mappings=2 nested_branches=3 assertion_like_calls=4 identity_ambiguous=false",
+            "::notice file=main.go,line=1,endLine=5,title=deburr function::<script>alert(1)</script> sloc=4 cyclomatic=12 nesting=2 mass=24.000000 flat_guards=1 field_mappings=2 nested_branches=3 assertion_like_calls=4 clone_like_calls=5 unwrap_like_calls=6 panic_macros=7 unsafe_blocks=8 identity_ambiguous=false",
             "::warning file=main.go,line=4,endLine=9,title=duplicate-branches::if branches have identical syntax",
             "::warning file=a/one.go,line=3,endLine=14,title=deburr duplication::clone clone-1 family=family-1 tokens=95 identity_ambiguous=true code_lines=10 functions=pkg/a/one.go::One",
             "::warning file=b/two.go,line=20,endLine=31,title=deburr duplication::clone clone-1 family=family-1 tokens=95 identity_ambiguous=true code_lines=9 functions=pkg/b/two.go::Two,pkg/b/two.go::Three",
@@ -623,7 +625,7 @@ fn text_comparison_shows_every_fact() {
         Format::Text,
         &output,
         &[
-            "Deburr comparison (schema 3)",
+            "Deburr comparison (schema 4)",
             "Analyzer: deburr 1.0.0 -> deburr 1.0.0",
             "Before provenance: build_version=1.0.0-test source_commit=abc123",
             "After provenance: build_version=1.0.1-test source_commit=def456",
@@ -690,7 +692,7 @@ fn html_comparison_shows_every_fact_and_escapes_values() {
         Format::Html,
         &output,
         &[
-            "Schema <code>3</code>",
+            "Schema <code>4</code>",
             "compatible <code>true</code>",
             "complete <code>true</code>",
             "source_commit=abc123",

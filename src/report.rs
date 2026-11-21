@@ -1,4 +1,4 @@
-//! The serialized schema-3 report, review ledger, and comparison result.
+//! The serialized schema-4 report, review ledger, and comparison result.
 //!
 //! Every type here is `Serialize + Deserialize`. Decoding rejects unknown
 //! fields, so a report from a different schema fails loudly instead of being
@@ -8,7 +8,7 @@
 use serde::{Deserialize, Serialize};
 
 /// Report schema version written by this analyzer.
-pub const SCHEMA_VERSION: &str = "3";
+pub const SCHEMA_VERSION: &str = "4";
 
 /// Review ledger schema version.
 pub const LEDGER_SCHEMA_VERSION: &str = "1";
@@ -180,6 +180,10 @@ pub struct File {
     pub bytes: u64,
     pub lines: u32,
     pub code_lines: u32,
+    /// Code lines inside the file's inline test regions (Rust `#[cfg(test)]`
+    /// items and `#[test]` functions); always zero for other languages. They
+    /// are part of `code_lines`.
+    pub inline_test_code_lines: u32,
 }
 
 /// 1-based line and 1-based byte column.
@@ -197,6 +201,14 @@ pub struct StructuralSignals {
     pub field_mappings: u32,
     pub nested_branches: u32,
     pub assertion_like_calls: u32,
+    /// Rust only: `.clone()`, `.to_owned()`, `.cloned()` with no arguments.
+    pub clone_like_calls: u32,
+    /// Rust only: `.unwrap()`-style calls and `.expect(..)`-style calls.
+    pub unwrap_like_calls: u32,
+    /// Rust only: `panic!`, `todo!`, `unimplemented!`, `unreachable!`.
+    pub panic_macros: u32,
+    /// Rust only: `unsafe` blocks.
+    pub unsafe_blocks: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

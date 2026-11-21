@@ -38,7 +38,7 @@ fn sample_report() -> Report {
             "build": {"version": "1.0.0"},
         },
         "analyzer": {"id": "deburr", "version": "1.0.0"},
-        "schema_version": "3",
+        "schema_version": "4",
         "files": [],
         "functions": [],
         "findings": [{
@@ -186,20 +186,20 @@ fn scope_schema_and_analyzer_differences_are_incompatible_in_fixed_order() {
     );
 
     let mut schema = sample_report();
-    schema.schema_version = "4".to_owned();
+    schema.schema_version = "5".to_owned();
     assert_eq!(
         compare(&before, &schema).reason,
-        "schema versions differ: 3 vs 4"
+        "schema versions differ: 4 vs 5"
     );
 
     // Everything differs; the first rule in the fixed order wins.
     let mut everything = sample_report();
-    everything.schema_version = "4".to_owned();
+    everything.schema_version = "5".to_owned();
     everything.analyzer.version = "2.0.0".to_owned();
     everything.scope.include_vendor = true;
     assert_eq!(
         compare(&before, &everything).reason,
-        "schema versions differ: 3 vs 4"
+        "schema versions differ: 4 vs 5"
     );
 }
 
@@ -393,6 +393,7 @@ fn analyzed_file(path: &str) -> File {
         bytes: 1,
         lines: 1,
         code_lines: 1,
+        inline_test_code_lines: 0,
     }
 }
 

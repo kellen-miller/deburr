@@ -777,7 +777,7 @@ fn progress_lines_follow_the_scan() {
     assert_eq!(
         text.lines().collect::<Vec<_>>(),
         [
-            "deburr: scanning Go and TypeScript source",
+            "deburr: scanning Go, TypeScript, and Rust source",
             "deburr: scanned 1 files (1 analyzed, 0 excluded, 0 unsupported, 0 errors)",
             "deburr: scan finished: 2 files, 1 analyzed, 0 errors",
             "deburr: summarizing metrics",

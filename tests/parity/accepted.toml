@@ -12,6 +12,11 @@
 #     (gotreesitter) is wrong and the official grammar is right (see the VS
 #     Code block below)
 #
+# Rust is not a divergence to list here: the Go version never analyzed `.rs`
+# files (it reports them unsupported), so the projection leaves out every
+# `.rs` file, function, and finding, and takes their share out of the coverage
+# and metrics totals before diffing. Go and TypeScript stay fully guarded.
+#
 # Every entry must also be recorded in the ExecPlan's Surprises & Discoveries.
 
 # vtprotobuf: CMake writes `compiler_depend.ts` dependency files (make rules,

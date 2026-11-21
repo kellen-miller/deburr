@@ -15,7 +15,7 @@ Deburr is one Cargo package: a library and a thin binary (`src/main.rs` calls
 | `cli` | Argument parsing, exit codes, progress lines, output-file safety |
 | `audit` | One audit from start to finish: discovery, parallel analysis, duplication, summaries, provenance, review ledger, and every ordering rule |
 | `discover` | Walking the target, categories, statuses, exclusion reasons, reading bytes |
-| `syntax` | tree-sitter parsing, code tokens, line maps, and the per-language node-kind tables (`go.rs`, `typescript.rs`) |
+| `syntax` | tree-sitter parsing, code tokens, line maps, and the per-language node-kind tables (`go.rs`, `typescript.rs`, `rust.rs`) |
 | `analysis` | Function units, metrics, signals, and findings, written once against a language's rule table |
 | `identity` | Every digest and ID: function, finding, clone, family, manifest, and report identity |
 | `duplication` | The only module that imports `cpd-core` |
@@ -39,17 +39,20 @@ emitted as absolute paths.
 
 The fixed traversal exclusions `.git`, `.hg`, `.svn`, `node_modules`, `.venv`,
 `venv`, `.agent`, and `.worktrees` are skipped as dependency, metadata, or
-agent-state directories. Their count is recorded in `Coverage`, so changing the
+agent-state directories. A directory named `target` is skipped the same way
+when it holds a regular file named `CACHEDIR.TAG`, which Cargo writes into its
+output directory; a `target` directory without the tag is ordinary source and
+is walked. Skipped directories are counted in `Coverage`, so changing the
 analyzer version is required before changing this source-selection rule.
 
 ## Parsing
 
 Every file is parsed once with tree-sitter (`tree-sitter-go`,
 `tree-sitter-typescript` for `.ts`, `.mts`, `.cts`, and its `tsx` grammar for
-`.tsx`). The parse result feeds line counting, function discovery, findings,
+`.tsx`, `tree-sitter-rust` for `.rs`). The parse result feeds line counting, function discovery, findings,
 signals, clone identity, and duplication tokens. No language runtime, compiler,
-or model is invoked, and nothing runs `go list`, `go test`, `tsc`, or target
-binaries.
+or model is invoked, and nothing runs `go list`, `go test`, `tsc`, `cargo`,
+`rustc`, or target binaries.
 
 A file is a parse error if its tree contains an `ERROR` or `MISSING` node. For
 Go, the structural check also applies: the first non-comment top-level child
@@ -67,17 +70,22 @@ generic methods and `new(expr)` in Go. `Cargo.toml` pins each fork's
 ([tree-sitter-typescript](https://github.com/kellen-miller/tree-sitter-typescript/blob/deburr-patches/PATCHES.md), [tree-sitter-go](https://github.com/kellen-miller/tree-sitter-go/blob/deburr-patches/PATCHES.md)). Each
 `PATCHES.md` records the upstream version, the change, and how to regenerate
 the parser. To update a grammar, push a new commit to the fork branch, change
-the `rev`, and rerun the grammar tests and the VS Code corpus check.
+the `rev`, and rerun the grammar tests and the VS Code corpus check. The Rust
+grammar is the unpatched crates.io `tree-sitter-rust` 0.24 release: it parsed
+every `.rs` file in ten local Rust repositories without an `ERROR` or
+`MISSING` node, so no fork is needed.
 
 ### Code tokens
 
 A code token is a tree-sitter leaf that is not a comment. String-like nodes
 (Go interpreted and raw strings and runes; TypeScript strings, templates, and
-regular expressions) are single tokens. After each statement of a statement
-container, the token list gets a synthetic `;` terminator at the statement's
-end. Both languages insert implicit semicolons at line ends, so without
-terminators `return` followed by a newline and `g()` would look identical to
-`return g()`. Terminators take part in fingerprints, branch equality, clone
+regular expressions; Rust string, raw string, and character literals) are
+single tokens. After each statement of a statement container, the token list
+gets a synthetic `;` terminator at the statement's end (Rust's containers are
+the file, `block`, and `declaration_list`). Go and TypeScript insert implicit
+semicolons at line ends, so without terminators `return` followed by a newline
+and `g()` would look identical to `return g()`. Rust also gets
+terminators, so statement boundaries are uniform across languages. Terminators take part in fingerprints, branch equality, clone
 identity, and duplication input, but never in line counts.
 
 `lines` counts newline-terminated lines (plus one when the last byte is not a
@@ -96,7 +104,7 @@ pub struct Report {
     pub review: Option<ReviewLedger>,
     pub provenance: Provenance,
     pub analyzer: AnalyzerIdentity,   // { id: "deburr", version }
-    pub schema_version: String,       // "3"
+    pub schema_version: String,       // "4"
     pub files: Vec<File>,
     pub functions: Vec<Function>,
     pub findings: Vec<Finding>,
@@ -111,24 +119,34 @@ All lists are sorted before the report is returned: files by source-relative
 path, functions by path/start/name/ID, findings by path/start/rule/ID, clones
 by ID. Output never depends on thread timing. No timestamp, host path, or
 process value is emitted. Decoding rejects unknown fields and requires schema
-`"3"`, a non-empty analyzer, language, and scope.
+`"4"`, a non-empty analyzer, language, and scope.
 
-Schema 3 replaces schema 2 and the analyzer version is `1.0.0`, so `compare`
-refuses to mix reports from the Go versions. The duplication section changed
-shape because the external detector is gone.
+Schema 3 replaced schema 2 when the rewrite dropped the external clone
+detector, so the duplication section changed shape. Schema 4 adds Rust: each
+file's `inline_test_code_lines` and the four Rust counters in
+`structural_signals` (`clone_like_calls`, `unwrap_like_calls`, `panic_macros`,
+`unsafe_blocks`, always zero for Go and TypeScript), and `.rs` files stop being
+`unsupported`. Decoding rejects schema 3, and `compare` refuses reports from
+different schemas or analyzer versions. The analyzer version is the release
+version (`DEBURR_VERSION` when the binary was built for a release, else the
+Cargo package version), so no source edit bumps it.
 
 `File` records every discovered source candidate, including exclusions and
 failures: path, category (`production`, `test`, `testdata`, `generated`,
 `vendor`, `unsupported`), status (`analyzed`, `excluded`, `unsupported`,
-`read_error`, `parse_error`), reason, error, bytes, lines, and code lines.
+`read_error`, `parse_error`), reason, error, bytes, lines, code lines, and
+inline test code lines (the code lines inside a Rust file's inline test
+regions; zero for every other file).
 
 `_test.go` files are `test`. A path component named `testdata` is `testdata`,
 and a component named `vendor` is `vendor`. TypeScript `.test.*`, `.spec.*`,
-and `__tests__` paths are `test`. Generated code is the Go convention
+and `__tests__` paths are `test`. A Rust `.rs` path with a `tests` or
+`benches` directory component is `test`. Generated code is the Go convention
 `// Code generated ... DO NOT EDIT.` before the first non-comment line (the
-same line among a TypeScript file's leading `//` comments). Other regular
-files outside `.go`, `.ts`, `.tsx`, `.mts`, and `.cts` are `unsupported`.
-Build constraints are not evaluated.
+same line among a TypeScript or Rust file's leading `//` comments; a Rust
+file's leading `// @generated` comment also counts). Other regular files
+outside `.go`, `.ts`, `.tsx`, `.mts`, `.cts`, and `.rs` are `unsupported`.
+Build constraints and Cargo features are not evaluated.
 
 `Function` preserves raw measurements and source evidence: ID, fingerprint,
 path, category, name, structural signals, start and end positions, SLOC,
@@ -146,8 +164,9 @@ range contains it, so nested closures never add a line twice.
 Cyclomatic complexity starts at 1 and adds one for each `if`, loop, non-default
 `case` and `select` case, `&&`, and `||`. TypeScript also counts `catch`,
 ternaries, and `??`. An `else` does not add a second decision, but an `else if`
-nests. Maximum nesting is the deepest level of control-flow constructs. Nested
-function units are separate roots. Mass is cyclomatic complexity times the
+nests. (Rust differs on both counts; see [Rust rules](#rust-rules).) Maximum
+nesting is the deepest level of control-flow constructs. Nested function units
+are separate roots. Mass is cyclomatic complexity times the
 square root of SLOC. A function is high complexity when its cyclomatic
 complexity exceeds 10.
 
@@ -165,7 +184,81 @@ branches differ. These findings do not prove a rewrite semantics-preserving.
 
 Structural signals are syntactic counters: flat guards, field mappings, nested
 branches, and assertion-like calls in Go tests. TypeScript records only nested
-branches. They do not infer semantics.
+branches, and Rust records nested branches plus its four ownership and panic
+counters. They do not infer semantics.
+
+### Rust rules
+
+`src/syntax/rust.rs` is the Rust table, written against tree-sitter-rust
+0.24's node kinds; the engine is the same one Go and TypeScript use.
+
+**Units and names.** A unit is a `function_item` with a body or any
+`closure_expression`; a trait method signature without a body is not a unit.
+IDs are `rust/<path>::<name>`. A name is the enclosing unit's name (if any),
+then the `mod`, `impl`, and `trait` containers between it and the unit, then
+its own name:
+
+- `mod` and `trait` items contribute their names, joined with `::`;
+- an inherent `impl` contributes its type (`Type::method`) and a trait `impl`
+  contributes `<Type as Trait>` (`<Type as Trait>::method`), with generic
+  arguments dropped from both;
+- a closure is `{closure#N}` under its parent, N counting the closures that
+  parent owns directly in source order from 1. A closure inside a `const` or
+  `static` initializer is named under that item.
+
+Repeated names get `#2`, `#3` and are identity-ambiguous, as in TypeScript.
+
+**Complexity.** Cyclomatic complexity starts at 1 and adds one for each
+`if_expression` (so `if let` and every `else if`), `while_expression` (so
+`while let`), `for_expression`, `try_expression` (`?`), `match` arm unless its
+whole pattern is `_`, match guard (so a guarded arm adds two, arm plus guard,
+and `_ if guard` is a guarded arm, not the catch-all), `let ... else`, `&&` and `||`
+(`binary_expression`), and each `&&` joining the conjuncts of an `if let`
+chain. `loop` adds nesting only. Nesting constructs are `if`, `while`, `for`,
+`loop`, and `match`. An `if` that is the body of an `else` clause stays at the
+depth of the `if` that heads the chain, so `else if` chains do not deepen,
+unlike TypeScript's.
+
+**Signals.** `OwnershipRules` in the table drives four counters, taken inside
+a function body without descending into nested function units. A
+`call_expression` whose `function` is a `field_expression` is a method call:
+`clone`, `to_owned`, and `cloned` with no arguments are clone-like; `unwrap`,
+`unwrap_unchecked`, and `unwrap_err` with no arguments and `expect` and
+`expect_err` with one argument are unwrap-like. A `macro_invocation` whose
+path's last segment is `panic`, `todo`, `unimplemented`, or `unreachable`
+counts as a panic macro, and each `unsafe_block` counts once. A bare function
+call such as `clone(x)`, a method with other arguments, and a field named
+`clone` are not counted. Nothing is typed or resolved.
+
+**Findings.** Both rules use the conditional shape. `redundant-boolean-return`
+needs an `if_expression` whose condition is a comparison `binary_expression`
+(`==`, `!=`, `<`, `<=`, `>`, `>=`, one level of parentheses unwrapped) and
+whose consequence and `else` block each hold a lone opposite
+`boolean_literal`, as a tail expression or a `return`; the sibling form `if c
+{ return true; }` followed by `false` also counts. A `boolean_literal`'s text
+decides true or false. `duplicate-branches` needs an `else_clause` holding a
+block whose code tokens equal the consequence's; an `else if` never counts.
+The shared finding engine is `src/analysis/findings.rs`.
+
+**Inline tests.** The table's `test_regions` hook returns the byte ranges of
+test items in a non-test file. A run of attributes applies to the item after
+it, and that item (attributes included) is a test region when an attribute is
+`cfg(..)` naming `test` outside `not(..)`, or the item is a function and an
+attribute's path ends in `test` (`#[test]`, `#[tokio::test]`). A region is
+test code throughout; regions are not searched for nested ones. Every function
+in a region has category `test`, and the file keeps category `production`.
+`File.inline_test_code_lines` is the number of code lines inside regions.
+`summarize_metrics` adds a file's `code_lines - inline_test_code_lines` to
+production and `inline_test_code_lines` to test; `all` is unchanged. With
+`--exclude-tests`, inline-test functions and findings are dropped, and inline
+lines are counted in no bucket, `all` included.
+
+**Macros.** tree-sitter-rust leaves the contents of `macro_rules!` bodies and
+macro invocation arguments as token trees, not expressions. Code inside them
+is therefore not measured (no complexity, signals, findings, or function
+units); the invocation itself is still a node and is counted where it stands.
+This is a known limitation, not something Deburr works around: it does not
+expand macros.
 
 `Coverage` counts discovered, analyzed, excluded, unsupported, read-error, and
 parse-error files, overall and per category. A scan with no analyzable files is
@@ -182,7 +275,11 @@ because its 0.1.x API changes between patch releases). Deburr owns file
 selection, parsing, and reporting; `cpd-core` owns one job: finding repeated
 runs in token streams that Deburr hands it. Production files and test files are
 detected as two separate groups, so no clone pairs production with test code.
-Deburr feeds `cpd-core` tokens from its own tree-sitter parse rather than the
+A Rust production file with inline test regions contributes its tokens outside
+the regions to the production group and its tokens inside them to the test
+group, each with its own code lines and with real source positions, so
+production and inline test code never pair, even within one file. With
+`--exclude-tests` the inline tokens are not kept. Deburr feeds `cpd-core` tokens from its own tree-sitter parse rather than the
 tokenizer crate, because the tokenizer's Go handling is crude (keywords are
 identifiers and comment text becomes tokens).
 

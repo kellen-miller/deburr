@@ -1,6 +1,7 @@
 //! Runs one audit from start to finish and returns its report.
 
 use std::io::Write;
+use std::ops::Range;
 use std::path::Path;
 
 use rayon::prelude::*;
@@ -59,9 +60,19 @@ struct FileOutcome {
     findings: Vec<Finding>,
     /// What clone detection needs, kept only for analyzed production and test
     /// files when duplication is requested (the syntax tree is dropped).
+    /// A production file's `tokens` and `code_lines` leave out its inline
+    /// test code, which is kept apart below so it can join the test group.
     language: Option<Language>,
     tokens: Vec<Token>,
+    /// Runs of `tokens` that were contiguous in the source; clone detection
+    /// never matches across two runs.
+    segments: Vec<Range<usize>>,
     code_lines: Vec<bool>,
+    /// Inline test tokens, their runs, and the lines they mark; empty without
+    /// inline tests, and with `--exclude-tests`.
+    inline_test_tokens: Vec<Token>,
+    inline_test_segments: Vec<Range<usize>>,
+    inline_test_lines: Vec<bool>,
 }
 
 /// Audits the tree at `root`: discovers files, parses and analyzes them in
@@ -74,7 +85,7 @@ pub fn audit(root: &Path, options: &AuditOptions, progress: &mut dyn Write) -> A
     let mut report = empty_report(options);
     let mut errors = Vec::new();
 
-    say(progress, "scanning Go and TypeScript source");
+    say(progress, "scanning Go, TypeScript, and Rust source");
 
     let discovery = discover::discover(root, options).unwrap_or_else(|error| {
         errors.push(AuditError::Input(error.to_string()));
@@ -88,7 +99,7 @@ pub fn audit(root: &Path, options: &AuditOptions, progress: &mut dyn Write) -> A
     let mut outcomes: Vec<FileOutcome> = discovery
         .files
         .into_par_iter()
-        .map(|file| analyze_file(file, keep_tokens))
+        .map(|file| analyze_file(file, keep_tokens, options.include_tests))
         .collect();
     outcomes.sort_by(|left, right| left.file.path.cmp(&right.file.path));
 
@@ -223,7 +234,7 @@ pub fn audit(root: &Path, options: &AuditOptions, progress: &mut dyn Write) -> A
         ))
     });
 
-    report.metrics = summarize_metrics(&files, &functions);
+    report.metrics = summarize_metrics(&files, &functions, options.include_tests);
     report.files = files;
     report.functions = functions;
     report.findings = findings;
@@ -258,7 +269,11 @@ pub fn audit(root: &Path, options: &AuditOptions, progress: &mut dyn Write) -> A
 /// Every file that was read is tokenized for line counts, including files
 /// excluded by category flags and files with syntax errors; only files whose
 /// status is still `analyzed` and that parse cleanly are analyzed further.
-fn analyze_file(discovered: DiscoveredFile, keep_tokens: bool) -> FileOutcome {
+fn analyze_file(
+    discovered: DiscoveredFile,
+    keep_tokens: bool,
+    include_inline_tests: bool,
+) -> FileOutcome {
     let mut outcome = FileOutcome {
         file: File {
             path: discovered.path,
@@ -269,6 +284,7 @@ fn analyze_file(discovered: DiscoveredFile, keep_tokens: bool) -> FileOutcome {
             bytes: discovered.bytes,
             lines: 0,
             code_lines: 0,
+            inline_test_code_lines: 0,
         },
         source: Vec::new(),
         functions: Vec::new(),
@@ -276,7 +292,11 @@ fn analyze_file(discovered: DiscoveredFile, keep_tokens: bool) -> FileOutcome {
         findings: Vec::new(),
         language: None,
         tokens: Vec::new(),
+        segments: Vec::new(),
         code_lines: Vec::new(),
+        inline_test_tokens: Vec::new(),
+        inline_test_segments: Vec::new(),
+        inline_test_lines: Vec::new(),
     };
 
     let (Some(language), Some(source)) = (discovered.language, discovered.source) else {
@@ -301,28 +321,76 @@ fn analyze_file(discovered: DiscoveredFile, keep_tokens: bool) -> FileOutcome {
         outcome.file.error.clone_from(message);
     }
 
-    let mut retain = false;
     let code_lines = match recovered {
         Ok(parsed) => {
             let clean = analyzable && syntax_error.is_none();
+            let mut test_regions = Vec::new();
             let code_lines = if clean {
-                let analysis =
-                    analysis::analyze(&outcome.file.path, outcome.file.category, &parsed);
+                let analysis = analysis::analyze(
+                    &outcome.file.path,
+                    outcome.file.category,
+                    &parsed,
+                    include_inline_tests,
+                );
                 outcome.functions = analysis.functions;
                 outcome.bodies = analysis.bodies;
                 outcome.findings = analysis.findings;
+                outcome.file.inline_test_code_lines = analysis.inline_test_code_lines;
+                test_regions = analysis.test_regions;
 
                 analysis.code_lines
             } else {
                 parsed.code_lines()
             };
 
-            retain = clean
+            let retain = clean
                 && keep_tokens
                 && matches!(outcome.file.category, Category::Production | Category::Test);
 
             if retain {
-                outcome.tokens = parsed.tokens;
+                // Production and inline test code are separate duplication
+                // inputs, so each keeps only its own tokens and lines. Real
+                // source positions stay on every token. Each input is split
+                // into runs that were contiguous in the source, so removing
+                // the other category never joins the code around it.
+                let inline_lines = parsed.region_code_lines(&test_regions);
+                let mut production = Vec::new();
+                let mut inline = Vec::new();
+                let mut in_inline = false;
+
+                for token in parsed.tokens {
+                    let is_inline = token.within(&test_regions);
+                    let (tokens, segments) = if is_inline {
+                        (&mut inline, &mut outcome.inline_test_segments)
+                    } else {
+                        (&mut production, &mut outcome.segments)
+                    };
+
+                    if is_inline != in_inline || segments.is_empty() {
+                        segments.push(tokens.len()..tokens.len());
+                    }
+
+                    in_inline = is_inline;
+                    tokens.push(token);
+
+                    if let Some(run) = segments.last_mut() {
+                        run.end = tokens.len();
+                    }
+                }
+
+                outcome.tokens = production;
+                outcome.code_lines = code_lines
+                    .iter()
+                    .zip(&inline_lines)
+                    .map(|(&code, &inline)| code && !inline)
+                    .collect();
+
+                if include_inline_tests && !test_regions.is_empty() {
+                    outcome.inline_test_tokens = inline;
+                    outcome.inline_test_lines = inline_lines;
+                } else {
+                    outcome.inline_test_segments.clear();
+                }
             }
 
             outcome.source = parsed.source;
@@ -339,16 +407,13 @@ fn analyze_file(discovered: DiscoveredFile, keep_tokens: bool) -> FileOutcome {
     outcome.file.code_lines =
         u32::try_from(code_lines.iter().filter(|&&code| code).count()).unwrap_or(u32::MAX);
 
-    if retain {
-        outcome.code_lines = code_lines;
-    }
-
     outcome
 }
 
-/// Detects clones separately in the analyzed production files and the
-/// analyzed test files, so a clone never pairs production code with test
-/// code and each category gets its own percentage.
+/// Detects clones separately in production code and in test code, so a clone
+/// never pairs production code with test code and each category gets its own
+/// percentage. A production file's inline test code joins the test group
+/// beside the test files; the rest of the file stays in the production group.
 fn measure_duplication(
     outcomes: &[FileOutcome],
     settings: &DuplicationSettings,
@@ -358,23 +423,47 @@ fn measure_duplication(
     let mut clones = Vec::new();
 
     for category in [Category::Production, Category::Test] {
-        let files: Vec<AnalyzedFile<'_>> = outcomes
+        let mut files: Vec<AnalyzedFile<'_>> = Vec::new();
+
+        for outcome in outcomes
             .iter()
-            .filter(|outcome| {
-                outcome.file.category == category && outcome.file.status == FileStatus::Analyzed
-            })
-            .filter_map(|outcome| {
-                Some(AnalyzedFile {
-                    path: &outcome.file.path,
-                    language: outcome.language?,
-                    source: &outcome.source,
-                    tokens: &outcome.tokens,
-                    code_lines: &outcome.code_lines,
-                    functions: &outcome.functions,
-                    bodies: &outcome.bodies,
-                })
-            })
-            .collect();
+            .filter(|outcome| outcome.file.status == FileStatus::Analyzed)
+        {
+            let Some(language) = outcome.language else {
+                continue;
+            };
+            let inline = category == Category::Test
+                && outcome.file.category == Category::Production
+                && !outcome.inline_test_tokens.is_empty();
+
+            if outcome.file.category != category && !inline {
+                continue;
+            }
+
+            files.push(AnalyzedFile {
+                path: &outcome.file.path,
+                language,
+                source: &outcome.source,
+                tokens: if inline {
+                    &outcome.inline_test_tokens
+                } else {
+                    &outcome.tokens
+                },
+                segments: if inline {
+                    &outcome.inline_test_segments
+                } else {
+                    &outcome.segments
+                },
+                code_lines: if inline {
+                    &outcome.inline_test_lines
+                } else {
+                    &outcome.code_lines
+                },
+                functions: &outcome.functions,
+                bodies: &outcome.bodies,
+            });
+        }
+
         let measured = duplication::detect(&files, category, settings)?;
 
         categories.push(measured.measurement);
@@ -391,17 +480,26 @@ fn measure_duplication(
 
 /// Code lines of analyzed files and function totals per bucket. Sums follow
 /// the (sorted) function order so floating-point addition is deterministic.
-fn summarize_metrics(files: &[File], functions: &[Function]) -> Metrics {
+///
+/// A production file's inline test lines count as test lines. Without
+/// `include_tests` they count in no bucket, `all` included.
+fn summarize_metrics(files: &[File], functions: &[Function], include_tests: bool) -> Metrics {
     let mut metrics = Metrics::default();
 
     for file in files
         .iter()
         .filter(|file| file.status == FileStatus::Analyzed)
     {
-        metrics.all.code_lines += file.code_lines;
+        let inline = file.inline_test_code_lines;
+        let inline_counted = if include_tests { inline } else { 0 };
+
+        metrics.all.code_lines += file.code_lines - inline + inline_counted;
 
         match file.category {
-            Category::Production => metrics.production.code_lines += file.code_lines,
+            Category::Production => {
+                metrics.production.code_lines += file.code_lines - inline;
+                metrics.test.code_lines += inline_counted;
+            }
             Category::Test => metrics.test.code_lines += file.code_lines,
             _ => {}
         }
@@ -478,7 +576,7 @@ pub(crate) fn empty_report(options: &AuditOptions) -> Report {
         findings: Vec::new(),
         scope: Scope {
             path_mode: "source-relative".to_owned(),
-            languages: vec!["go".to_owned(), "typescript".to_owned()],
+            languages: vec!["go".to_owned(), "typescript".to_owned(), "rust".to_owned()],
             include_tests: options.include_tests,
             include_testdata: options.include_testdata,
             include_vendor: options.include_vendor,
@@ -493,7 +591,7 @@ pub(crate) fn empty_report(options: &AuditOptions) -> Report {
                     enabled: true,
                 })
                 .collect(),
-            language: "go,typescript".to_owned(),
+            language: "go,typescript,rust".to_owned(),
             duplication: duplication_config,
             max_file_bytes: options.max_file_bytes,
             high_complexity_threshold: HIGH_COMPLEXITY_THRESHOLD,
