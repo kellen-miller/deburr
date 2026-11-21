@@ -98,10 +98,28 @@ runs:
         ACTION_PATH: ${{ github.action_path }}
       run: |
         set -euo pipefail
+
+        # The caller's workspace is untrusted input. Cargo reads
+        # .cargo/config.toml from the current directory and every parent, so
+        # `build.target`, `build.rustc-wrapper`, and `build.target-dir` in the
+        # audited repository could redirect the output or run its code. Build
+        # a copy of the Action's source under RUNNER_TEMP (outside the
+        # workspace and without any .cargo directory), and clear the
+        # environment overrides that do the same.
+        unset RUSTC RUSTC_WRAPPER RUSTC_WORKSPACE_WRAPPER RUSTFLAGS \
+          CARGO_ENCODED_RUSTFLAGS CARGO_BUILD_RUSTC CARGO_BUILD_RUSTC_WRAPPER \
+          CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER CARGO_BUILD_RUSTFLAGS \
+          CARGO_BUILD_TARGET CARGO_BUILD_TARGET_DIR CARGO_TARGET_DIR
+
+        source_dir="$RUNNER_TEMP/deburr/source"
         target_dir="$RUNNER_TEMP/deburr/target"
-        cargo build --release --locked \
-          --manifest-path "$ACTION_PATH/Cargo.toml" \
-          --target-dir "$target_dir"
+        rm -rf "$source_dir"
+        mkdir -p "$source_dir"
+        tar -C "$ACTION_PATH" --exclude=.git --exclude=.cargo --exclude=target -cf - . \
+          | tar -C "$source_dir" -xf -
+
+        cd "$source_dir"
+        cargo build --release --locked --target-dir "$target_dir"
 
         binary="$target_dir/release/deburr"
         if [[ "$RUNNER_OS" == Windows ]]; then

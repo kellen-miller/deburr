@@ -120,7 +120,10 @@ on Deburr's own tree-sitter tokens.
 
 At a release tag the action downloads the prebuilt binary for the runner and
 verifies its checksum. At any other ref (a branch, a commit, or a local
-`uses: ./`) it installs Rust and runs `cargo build --release --locked`.
+`uses: ./`) it installs Rust and runs `cargo build --release --locked` on a
+copy of the action's source outside your workspace, so your repository's
+`.cargo/config.toml` and Cargo environment overrides (`build.target`,
+`rustc-wrapper`, `target-dir`) cannot change the build.
 
 ```yaml
 steps:
@@ -181,7 +184,9 @@ Run `cargo test --locked`. Pull-request CI runs `cargo fmt`, `cargo clippy`,
 findings in code rather than suppressing them. See
 [docs/testing.md](docs/testing.md) for the test layers, the parity check
 against the Go version, and the pinned VS Code integration test. Releases are
-built by `.github/workflows/release.yaml` on pushes to `main`.
+built by `.github/workflows/release.yaml` on pushes to `main`; a release is
+published only after its assets are uploaded to a draft and verified (see
+[docs/testing.md](docs/testing.md)).
 
 ## License
 
