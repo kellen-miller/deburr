@@ -1,0 +1,5 @@
+# Files compiled into the binary (askama templates and include_str!) carry
+# their line endings into output. Keep them LF on every checkout so reports
+# and the cleanup guide are identical across platforms.
+templates/** text eol=lf
+docs/cleanup.md text eol=lf

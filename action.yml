@@ -8,7 +8,7 @@ inputs:
     required: false
     default: .
   format:
-    description: "Report format: text, json, html, or github."
+    description: "Format of the file the report output points to: text, json, markdown, html, or github. Annotations, the job summary, and the artifact are written whatever this is."
     required: false
     default: github
   duplicates:
@@ -23,11 +23,30 @@ inputs:
     description: Minimum code lines in each clone region.
     required: false
     default: "8"
+  summary:
+    description: Write the report to the job summary. On pull requests it leads with what the pull request changed.
+    required: false
+    default: "true"
+  upload:
+    description: Upload report.json and report.html as a workflow artifact.
+    required: false
+    default: "true"
+  artifact-name:
+    description: Name of the uploaded artifact. Artifact names must be unique within a workflow run.
+    required: false
+    default: deburr-report
+  compare-base:
+    description: On pull requests, audit the base commit, compare, and annotate only what got worse.
+    required: false
+    default: "true"
 
 outputs:
   report:
-    description: Absolute path of the report written by the audit, when a report exists.
+    description: Absolute path of the report in the requested format, when a report exists.
     value: ${{ steps.audit.outputs.report }}
+  directory:
+    description: Absolute path of the directory holding report.json, report.html, report.md, and report.github.
+    value: ${{ steps.audit.outputs.directory }}
 
 runs:
   using: composite
@@ -152,24 +171,31 @@ runs:
         DEBURR_DUPLICATES: ${{ inputs.duplicates }}
         DEBURR_MIN_CLONE_TOKENS: ${{ inputs.min-clone-tokens }}
         DEBURR_MIN_CLONE_LINES: ${{ inputs.min-clone-lines }}
+        DEBURR_SUMMARY: ${{ inputs.summary }}
+        DEBURR_UPLOAD: ${{ inputs.upload }}
+        DEBURR_COMPARE_BASE: ${{ inputs.compare-base }}
+        DEBURR_EVENT: ${{ github.event_name }}
+        DEBURR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
       run: |
         set -euo pipefail
 
         case "$DEBURR_FORMAT" in
-          text|json|html|github) ;;
+          text|json|markdown|html|github) ;;
           *)
             printf 'Unsupported Deburr report format: %s\n' "$DEBURR_FORMAT" >&2
             exit 2
             ;;
         esac
 
-        case "$DEBURR_DUPLICATES" in
-          true|false) ;;
-          *)
-            printf 'The Deburr duplicates input must be true or false.\n' >&2
-            exit 2
-            ;;
-        esac
+        for value in "$DEBURR_DUPLICATES" "$DEBURR_SUMMARY" "$DEBURR_UPLOAD" "$DEBURR_COMPARE_BASE"; do
+          case "$value" in
+            true|false) ;;
+            *)
+              printf 'The Deburr duplicates, summary, upload, and compare-base inputs must be true or false.\n' >&2
+              exit 2
+              ;;
+          esac
+        done
 
         for value in "$DEBURR_MIN_CLONE_TOKENS" "$DEBURR_MIN_CLONE_LINES"; do
           if [[ ! "$value" =~ ^[1-9][0-9]*$ ]]; then
@@ -195,25 +221,169 @@ runs:
           target="$GITHUB_WORKSPACE/$target"
         fi
 
+        # `render --source` and the base audit want a directory; a file target
+        # reports paths relative to its parent.
+        source_dir="$target"
+        if [[ -f "$target" ]]; then
+          source_dir=$(dirname "$target")
+        fi
+
         invocation_dir="$RUNNER_TEMP/deburr/${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}-${RANDOM}"
         mkdir -p "$invocation_dir"
-        output="$invocation_dir/report.$DEBURR_FORMAT"
-        audit_args=(audit "$target" --format "$DEBURR_FORMAT" --output "$output")
+        printf 'directory=%s\n' "$invocation_dir" >> "$GITHUB_OUTPUT"
+
+        # One audit, to JSON. Every other file is rendered from it, so the
+        # tree is analyzed once however many formats are written.
+        report_json="$invocation_dir/report.json"
+        settings_args=()
         if [[ "$DEBURR_DUPLICATES" == true ]]; then
-          audit_args+=(--min-clone-tokens "$DEBURR_MIN_CLONE_TOKENS" --min-clone-lines "$DEBURR_MIN_CLONE_LINES")
+          settings_args+=(--min-clone-tokens "$DEBURR_MIN_CLONE_TOKENS" --min-clone-lines "$DEBURR_MIN_CLONE_LINES")
         else
-          audit_args+=(--no-duplicates)
+          settings_args+=(--no-duplicates)
         fi
 
         set +e
-        "$DEBURR_BIN" "${audit_args[@]}"
+        "$DEBURR_BIN" audit "$target" --format json --output "$report_json" "${settings_args[@]}"
         status=$?
         set -e
 
-        if [[ -f "$output" ]]; then
-          if [[ "$DEBURR_FORMAT" == github ]]; then
-            cat "$output"
+        # Audit exits nonzero for analysis errors but still writes the report.
+        if [[ ! -f "$report_json" ]]; then
+          exit "$status"
+        fi
+
+        file_for() {
+          case "$1" in
+            markdown) printf '%s/report.md' "$invocation_dir" ;;
+            *) printf '%s/report.%s' "$invocation_dir" "$1" ;;
+          esac
+        }
+
+        formats=(html markdown github)
+        case "$DEBURR_FORMAT" in
+          text) formats+=(text) ;;
+        esac
+
+        for format in "${formats[@]}"; do
+          if ! "$DEBURR_BIN" render "$report_json" --source "$source_dir" \
+            --format "$format" --output "$(file_for "$format")"; then
+            printf 'Deburr could not render the %s report.\n' "$format" >&2
+            if [[ "$status" -eq 0 ]]; then
+              status=1
+            fi
           fi
+        done
+
+        # On pull requests, audit the base commit the same way and compare, so
+        # annotations and the summary lead with what this pull request changed.
+        # A failure anywhere here only drops the comparison, never the job.
+        base_tree=""
+        compare_note=""
+
+        cleanup_base() {
+          if [[ -n "$base_tree" ]]; then
+            git -C "$GITHUB_WORKSPACE" worktree remove --force "$base_tree" >/dev/null 2>&1 || true
+            git -C "$GITHUB_WORKSPACE" worktree prune >/dev/null 2>&1 || true
+          fi
+        }
+        trap cleanup_base EXIT
+
+        compare_with_base() {
+          local base_json="$invocation_dir/base.json"
+          local base_target
+
+          if is_absolute_path "$DEBURR_PATH"; then
+            compare_note="path is absolute"
+            return 1
+          fi
+
+          if [[ ! "$DEBURR_BASE_SHA" =~ ^[0-9a-f]{40,64}$ ]]; then
+            compare_note="the base commit is unknown"
+            return 1
+          fi
+
+          if ! git -C "$GITHUB_WORKSPACE" cat-file -e "$DEBURR_BASE_SHA^{commit}" 2>/dev/null; then
+            if ! git -C "$GITHUB_WORKSPACE" fetch --no-tags --depth=1 origin "$DEBURR_BASE_SHA" >/dev/null 2>&1; then
+              compare_note="could not fetch the base commit"
+              return 1
+            fi
+          fi
+
+          if ! git -C "$GITHUB_WORKSPACE" worktree add --detach "$invocation_dir/base" "$DEBURR_BASE_SHA" >/dev/null 2>&1; then
+            compare_note="could not check out the base commit"
+            return 1
+          fi
+          base_tree="$invocation_dir/base"
+
+          base_target="$base_tree/$DEBURR_PATH"
+          if [[ ! -e "$base_target" ]]; then
+            compare_note="the path does not exist in the base commit"
+            return 1
+          fi
+
+          # Same clone settings as the head audit, or compare reports the
+          # reports as incompatible. The base audit's own exit status does not
+          # matter: compare reads whether the report is complete.
+          "$DEBURR_BIN" audit "$base_target" --format json --output "$base_json" --quiet "${settings_args[@]}" || true
+          if [[ ! -f "$base_json" ]]; then
+            compare_note="the base audit failed"
+            return 1
+          fi
+
+          if ! "$DEBURR_BIN" compare "$base_json" "$report_json" --source "$source_dir" \
+            --format markdown --output "$invocation_dir/comparison.md" 2>/dev/null; then
+            compare_note="the base and this pull request were not comparable"
+            return 1
+          fi
+
+          if ! "$DEBURR_BIN" compare "$base_json" "$report_json" --source "$source_dir" \
+            --format github --output "$invocation_dir/comparison.github" 2>/dev/null; then
+            compare_note="could not render the comparison"
+            return 1
+          fi
+        }
+
+        if [[ "$DEBURR_COMPARE_BASE" == true && ( "$DEBURR_EVENT" == pull_request || "$DEBURR_EVENT" == pull_request_target ) ]]; then
+          if ! compare_with_base; then
+            rm -f "$invocation_dir/comparison.md" "$invocation_dir/comparison.github"
+            printf 'Pull-request comparison unavailable: %s.\n' "$compare_note" >&2
+          fi
+        fi
+
+        # Workflow commands on stdout become annotations, so print exactly one
+        # set. A successful comparison rewrites its paths to be
+        # workspace-relative, so it replaces the audit's annotations.
+        annotations="$(file_for github)"
+        if [[ -f "$invocation_dir/comparison.github" ]]; then
+          annotations="$invocation_dir/comparison.github"
+        fi
+        cat "$annotations"
+
+        if [[ "$DEBURR_SUMMARY" == true && -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
+          {
+            if [[ -f "$invocation_dir/comparison.md" ]]; then
+              cat "$invocation_dir/comparison.md"
+              printf '\n'
+            elif [[ -n "$compare_note" ]]; then
+              printf 'Pull-request comparison unavailable: %s.\n\n' "$compare_note"
+            fi
+            cat "$(file_for markdown)"
+          } >> "$GITHUB_STEP_SUMMARY"
+        fi
+
+        output="$(file_for "$DEBURR_FORMAT")"
+        if [[ -f "$output" ]]; then
           printf 'report=%s\n' "$output" >> "$GITHUB_OUTPUT"
         fi
+
         exit "$status"
+
+    - name: Upload report
+      if: ${{ !cancelled() && inputs.upload == 'true' && steps.audit.outputs.directory != '' }}
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: ${{ inputs.artifact-name }}
+        path: |
+          ${{ steps.audit.outputs.directory }}/report.json
+          ${{ steps.audit.outputs.directory }}/report.html
+        if-no-files-found: ignore

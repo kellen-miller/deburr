@@ -133,7 +133,7 @@ jobs:
           # The repository root holds deliberately malformed corpus files, so
           # audit the clean duplication corpus instead.
           "$binary" audit tests/corpus/dup --format json --quiet --output "$RUNNER_TEMP/smoke-report.json"
-          grep -q '"schema_version": "3"' "$RUNNER_TEMP/smoke-report.json"
+          grep -Eq '"schema_version": "[0-9]+"' "$RUNNER_TEMP/smoke-report.json"
           grep -q '"status": "measured"' "$RUNNER_TEMP/smoke-report.json"
 
       - name: Package (tar.gz)

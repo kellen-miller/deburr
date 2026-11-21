@@ -46,7 +46,15 @@ operating systems. A local reference is not a release tag, so the Action builds
 with `cargo build --release --locked`. The tests assert that duplication is
 `measured` with clones, that `duplicates: false` yields `not_requested`, that a
 large `min-clone-tokens` removes the clones, and that an invalid
-`min-clone-lines` fails.
+`min-clone-lines` fails. Another invocation checks the `html` report, the
+`directory` output (`report.json`, `report.md`, `report.github`) and the
+artifact upload. Because that workflow runs on pull requests, the same
+invocation exercises pull-request mode: fetching the base commit, auditing it in
+a worktree, and comparing. Failure there only downgrades to a note, so the test
+cannot assert the comparison text. Invocations that do not upload set
+`upload: false`, because artifact names must be unique within a run. The
+comparison itself is checked end to end by a scratch-repository run after
+pushing, not by this workflow.
 
 The corrupted-checksum case flips the first hex digit of the digest to a
 different digit and asserts the file changed before running the negative test,

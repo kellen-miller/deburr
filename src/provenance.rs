@@ -47,6 +47,52 @@ pub fn build() -> BuildProvenance {
     }
 }
 
+/// `https://github.com/<owner>/<repo>/blob/<commit>` when `dir`'s origin
+/// remote is on GitHub (`git@github.com:`, `https://github.com/` or
+/// `ssh://git@github.com/` forms); `None` otherwise.
+#[must_use]
+pub fn github_blob_base(dir: &Path, commit: &str) -> Option<String> {
+    if commit.is_empty() {
+        return None;
+    }
+
+    let remote = git_output(dir, &["remote", "get-url", "origin"], "remote-url").ok()?;
+    let repository = github_repository(remote.trim())?;
+
+    Some(format!("https://github.com/{repository}/blob/{commit}"))
+}
+
+/// `dir`'s path relative to its repository root, with a trailing slash
+/// (empty at the root); `None` outside a repository.
+#[must_use]
+pub fn repository_prefix(dir: &Path) -> Option<String> {
+    let prefix = git_output(dir, &["rev-parse", "--show-prefix"], "show-prefix").ok()?;
+
+    Some(prefix.trim().to_owned())
+}
+
+/// `owner/repo` from a GitHub remote URL.
+fn github_repository(remote: &str) -> Option<String> {
+    let path = [
+        "git@github.com:",
+        "https://github.com/",
+        "ssh://git@github.com/",
+    ]
+    .iter()
+    .find_map(|prefix| remote.strip_prefix(prefix))?;
+    let path = path.trim_end_matches('/');
+    let path = path.strip_suffix(".git").unwrap_or(path);
+    let (owner, repo) = path.split_once('/')?;
+    let valid = |part: &str| {
+        !part.is_empty()
+            && part
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+    };
+
+    (valid(owner) && valid(repo)).then(|| format!("{owner}/{repo}"))
+}
+
 fn git_output(dir: &Path, args: &[&str], command: &'static str) -> Result<String, ProvenanceError> {
     let output = Command::new("git")
         .args(["-c", "core.fsmonitor=false", "-C"])
@@ -62,4 +108,40 @@ fn git_output(dir: &Path, args: &[&str], command: &'static str) -> Result<String
     }
 
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::github_repository;
+
+    #[test]
+    fn github_remotes_in_every_supported_form() {
+        for remote in [
+            "git@github.com:owner/repo.git",
+            "git@github.com:owner/repo",
+            "https://github.com/owner/repo.git",
+            "https://github.com/owner/repo/",
+            "ssh://git@github.com/owner/repo.git",
+        ] {
+            assert_eq!(
+                github_repository(remote).as_deref(),
+                Some("owner/repo"),
+                "{remote}"
+            );
+        }
+    }
+
+    #[test]
+    fn other_hosts_and_malformed_remotes_are_rejected() {
+        for remote in [
+            "git@gitlab.com:owner/repo.git",
+            "https://example.com/owner/repo",
+            "https://github.com/owner",
+            "https://github.com/owner/repo/extra",
+            "/local/path/repo",
+            "",
+        ] {
+            assert_eq!(github_repository(remote), None, "{remote}");
+        }
+    }
 }

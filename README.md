@@ -71,11 +71,53 @@ deburr audit . --format json --output /tmp/deburr-after.json
 deburr compare /tmp/deburr-before.json /tmp/deburr-after.json
 ```
 
-Reports can be rendered as `text` (default), `json`, `html`, or `github`.
-`audit --output` rejects paths inside the audited directory, so keep reports
-somewhere else. Audits print phase updates and file counts to stderr; stdout
-stays report-only. Use `--quiet` to suppress progress. Run `deburr audit --help`
-for all flags.
+Reports can be rendered as `text` (default), `markdown`, `html`, `github`, or
+`json`. `audit --output` rejects paths inside the audited directory, so keep
+reports somewhere else. Audits print phase updates and file counts to stderr;
+stdout stays report-only. Use `--quiet` to suppress progress. Run
+`deburr audit --help` for all flags.
+
+### Report formats
+
+`json` is the complete, stable machine contract: every function, finding,
+clone, and coverage fact, under the schema version recorded in the report.
+
+`text`, `markdown`, `html`, and `github` are human formats. They show one
+shared summary: a verdict, setup hints, a ranked "Start here" list (findings,
+then production code, then tests, each by size), and where the problems
+concentrate. Every item says what is wrong in words, gives a rule-based hint,
+and links to the code when a link is possible.
+
+| Format | Shows |
+| --- | --- |
+| `text` | The summary and the top 10 items; color only on a terminal and never with `NO_COLOR` |
+| `markdown` | The same summary as GitHub-flavored markdown, for job summaries and pull-request text |
+| `html` | The summary plus every item with its source, all functions, and the full JSON report embedded for tools |
+| `github` | One verdict notice and at most 10 annotations (`::warning`/`::error`) on the code |
+
+**Only `json` is a stable interface.** The wording, ordering, layout, and
+content of `text`, `markdown`, `html`, and `github` output may change in any
+release, so parse JSON, not the human formats.
+
+Locations become links (`blob/<commit>/<path>#Lx-Ly`) when the source has a
+GitHub `origin` remote and a known, clean commit (in GitHub Actions, from
+`GITHUB_SERVER_URL` and `GITHUB_REPOSITORY`). Otherwise they print as
+`file:line`. The HTML report embeds source for up to 300 items when the source tree is
+available.
+
+`deburr render` writes any format from a saved JSON report, so one audit can
+feed every format without reanalyzing the tree:
+
+```sh
+deburr audit . --format json --output /tmp/deburr.json
+deburr render /tmp/deburr.json --format html --source . --output /tmp/deburr.html
+deburr render /tmp/deburr.json --format markdown
+```
+
+`--source DIR` names the tree the report was taken from, for source snippets
+and links. `compare` and `review apply` accept `--source` too. deburr uses it
+only when the directory is a clean Git checkout at the report's commit; otherwise
+the output shows locations only and says why on stderr.
 
 ### Baselines and versions
 
@@ -191,27 +233,54 @@ steps:
       path: .
 ```
 
-The report goes to a temp file outside the checkout, exposed as the `report`
-output. To keep it:
+The action audits once, to JSON, and renders every other file from that report
+(`deburr render`), so the tree is analyzed once however many outputs are
+written. In a workflow it does four things:
+
+- Prints the `github` render to the log, which creates annotations on the code
+  (at most 10).
+- Appends the markdown report to the job summary (`summary`).
+- Uploads `report.json` and `report.html` as a workflow artifact (`upload`).
+- Writes the report in the requested `format` to a temp file outside the
+  checkout, exposed as the `report` output. The `directory` output holds
+  `report.json`, `report.html`, `report.md`, and `report.github`.
+
+On `pull_request` and `pull_request_target` events the action also audits the
+base commit with the same clone settings, compares it with the pull request, and
+annotates only what the pull request made worse. The job summary then shows
+"This pull request" above the whole-repository report. This needs a relative
+`path` and a base commit it can fetch (or that checkout already fetched). If any
+part of it fails, the summary says "Pull-request comparison unavailable:
+<reason>", the annotations fall back to the whole-repository audit, and the job
+status is unchanged. When `path` is a subdirectory, annotations also come from
+the whole-repository audit, and the comparison appears only in the summary.
+Set `compare-base: false` to skip all of this.
 
 ```yaml
-  - if: always() && steps.deburr.outputs.report != ''
-    uses: actions/upload-artifact@v4
+steps:
+  - uses: actions/checkout@v4
+
+  - uses: kellen-miller/deburr@v1.0.0
     with:
-      name: deburr-report
-      path: ${{ steps.deburr.outputs.report }}
+      path: .
+      compare-base: true # the default
 ```
 
 | Input | Default | Description |
 | --- | --- | --- |
 | `path` | `.` | File or directory to audit |
-| `format` | `github` | `text`, `json`, `html`, or `github` |
+| `format` | `github` | Format of the file the `report` output points to: `text`, `markdown`, `html`, `github`, or `json` |
 | `duplicates` | `true` | Detect clones; `false` skips detection |
 | `min-clone-tokens` | `80` | Minimum tokens in a clone |
 | `min-clone-lines` | `8` | Minimum code lines in each clone region |
+| `summary` | `true` | Write the report to the job summary |
+| `upload` | `true` | Upload `report.json` and `report.html` as an artifact |
+| `artifact-name` | `deburr-report` | Artifact name; unique per workflow run, so give each invocation in one run its own name or set `upload: false` |
+| `compare-base` | `true` | On pull requests, audit the base commit and compare |
 
 The action needs neither Go, Node, nor a clone detector. The step fails on
-analyzer errors, not on findings alone.
+analyzer errors, not on findings alone. The artifact upload uses
+`actions/upload-artifact` pinned to a commit.
 
 ## Changes from the Go version
 
