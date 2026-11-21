@@ -8,8 +8,8 @@ use std::io::{self, Write};
 use askama::Template;
 
 use super::{
-    clone_text, enum_name, finding_text, function_text, ledger_of, location, previous_text,
-    provenance_text, ranked_functions, review_fields,
+    Source, Style, clone_text, enum_name, finding_text, function_text, ledger_of, location,
+    previous_text, provenance_text, ranked_functions, review_fields,
 };
 use crate::report::{
     AmbiguousMatch, Category, Change, ChangeState, CodeClone, Comparison, Finding, MetricBucket,
@@ -196,7 +196,12 @@ struct ReportPage<'a> {
 /// # Errors
 ///
 /// Returns an I/O error when rendering or writing fails.
-pub fn report(report: &Report, out: &mut dyn Write) -> io::Result<()> {
+pub fn report(
+    report: &Report,
+    _source: &Source,
+    _style: Style,
+    out: &mut dyn Write,
+) -> io::Result<()> {
     let ledger = ledger_of(report);
     let decisions: HashMap<(ReviewKind, &str), &ReviewItem> = ledger
         .items
@@ -535,7 +540,12 @@ struct ComparisonPage<'a> {
 /// # Errors
 ///
 /// Returns an I/O error when rendering or writing fails.
-pub fn comparison(comparison: &Comparison, out: &mut dyn Write) -> io::Result<()> {
+pub fn comparison(
+    comparison: &Comparison,
+    _source: &Source,
+    _style: Style,
+    out: &mut dyn Write,
+) -> io::Result<()> {
     let mut metrics = Vec::new();
     for (label, before, after) in [
         (

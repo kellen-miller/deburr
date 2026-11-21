@@ -3,8 +3,8 @@
 use std::io::{self, Write};
 
 use super::{
-    clone_text, endpoint_text, enum_name, finding_text, function_text, ledger_of, location,
-    provenance_text, ranked_functions, review_fields,
+    Source, Style, clone_text, endpoint_text, enum_name, finding_text, function_text, ledger_of,
+    location, provenance_text, ranked_functions, review_fields,
 };
 use crate::report::{
     AmbiguousMatch, Category, Change, ChangeState, Comparison, FileStatus, Function, MetricBucket,
@@ -21,7 +21,12 @@ const CLEANUP_GUIDE: &str = include_str!("../../docs/cleanup.md");
 /// # Errors
 ///
 /// Returns an I/O error when writing fails.
-pub fn report(report: &Report, out: &mut dyn Write) -> io::Result<()> {
+pub fn report(
+    report: &Report,
+    _source: &Source,
+    _style: Style,
+    out: &mut dyn Write,
+) -> io::Result<()> {
     writeln!(out, "Deburr report (schema {})", report.schema_version)?;
     writeln!(
         out,
@@ -189,7 +194,12 @@ pub fn report(report: &Report, out: &mut dyn Write) -> io::Result<()> {
 /// # Errors
 ///
 /// Returns an I/O error when writing fails.
-pub fn comparison(comparison: &Comparison, out: &mut dyn Write) -> io::Result<()> {
+pub fn comparison(
+    comparison: &Comparison,
+    _source: &Source,
+    _style: Style,
+    out: &mut dyn Write,
+) -> io::Result<()> {
     writeln!(
         out,
         "Deburr comparison (schema {})",

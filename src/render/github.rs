@@ -2,7 +2,7 @@
 
 use std::io::{self, Write};
 
-use super::{enum_name, ledger_of, provenance_text, review_fields};
+use super::{Source, Style, enum_name, ledger_of, provenance_text, review_fields};
 use crate::report::{
     ChangeState, Comparison, DuplicationStatus, FileStatus, Finding, Position, Report, ReviewItem,
     ReviewStatus,
@@ -78,7 +78,12 @@ fn command(
 /// # Errors
 ///
 /// Returns an I/O error when writing fails.
-pub fn report(report: &Report, out: &mut dyn Write) -> io::Result<()> {
+pub fn report(
+    report: &Report,
+    _source: &Source,
+    _style: Style,
+    out: &mut dyn Write,
+) -> io::Result<()> {
     command(
         out,
         "notice",
@@ -275,7 +280,12 @@ pub fn report(report: &Report, out: &mut dyn Write) -> io::Result<()> {
 /// # Errors
 ///
 /// Returns an I/O error when writing fails.
-pub fn comparison(comparison: &Comparison, out: &mut dyn Write) -> io::Result<()> {
+pub fn comparison(
+    comparison: &Comparison,
+    _source: &Source,
+    _style: Style,
+    out: &mut dyn Write,
+) -> io::Result<()> {
     command(
         out,
         "notice",

@@ -6,7 +6,7 @@
 
 use std::env;
 use std::fs::{self, File};
-use std::io::{self, BufWriter, Write};
+use std::io::{self, BufWriter, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -17,7 +17,8 @@ use serde::de::DeserializeOwned;
 use crate::audit::{self, AuditOptions};
 use crate::compare;
 use crate::duplication::DuplicationSettings;
-use crate::render::{self, Format};
+use crate::provenance;
+use crate::render::{self, Format, Source, Style};
 use crate::report::{
     DEFAULT_MIN_CLONE_LINES, DEFAULT_MIN_CLONE_TOKENS, Report, ReviewLedger, ValidationError,
 };
@@ -43,6 +44,8 @@ enum Command {
     Compare(CompareArgs),
     /// Create or apply a review ledger
     Review(ReviewArgs),
+    /// Render a JSON report in another format
+    Render(RenderArgs),
     /// Print a workflow guide
     Guide(GuideArgs),
 }
@@ -111,6 +114,24 @@ struct CompareArgs {
     /// Write the result to FILE instead of standard output
     #[arg(long, value_name = "FILE")]
     output: Option<PathBuf>,
+    /// Source tree of the after report, for links and code snippets
+    #[arg(long, value_name = "DIR")]
+    source: Option<PathBuf>,
+}
+
+#[derive(Debug, Args)]
+struct RenderArgs {
+    /// JSON report to render
+    report: PathBuf,
+    /// Output format
+    #[arg(long, value_enum, ignore_case = true, default_value = "text")]
+    format: Format,
+    /// Write the result to FILE instead of standard output
+    #[arg(long, value_name = "FILE")]
+    output: Option<PathBuf>,
+    /// Source tree the report was taken from, for links and code snippets
+    #[arg(long, value_name = "DIR")]
+    source: Option<PathBuf>,
 }
 
 #[derive(Debug, Args)]
@@ -149,6 +170,9 @@ struct ReviewApplyArgs {
     /// Write the result to FILE instead of standard output
     #[arg(long, value_name = "FILE")]
     output: Option<PathBuf>,
+    /// Source tree the report was taken from, for links and code snippets
+    #[arg(long, value_name = "DIR")]
+    source: Option<PathBuf>,
 }
 
 #[derive(Debug, Args)]
@@ -213,6 +237,7 @@ pub fn run() -> ExitCode {
     let result = match cli.command {
         Command::Audit(args) => audit_command(&args),
         Command::Compare(args) => compare_command(&args),
+        Command::Render(args) => render_command(&args),
         Command::Review(args) => match args.command {
             ReviewCommand::Init(args) => review_init_command(&args),
             ReviewCommand::Apply(args) => review_apply_command(&args),
@@ -269,9 +294,24 @@ fn audit_command(args: &AuditArgs) -> Result<ExitCode, CliError> {
         prefix_paths(&mut outcome.report, &prefix);
     }
 
+    let root = if args.path.is_file() {
+        args.path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or(Path::new("."))
+    } else {
+        &args.path
+    };
+    let (source, style) = render_context(
+        Some(root),
+        &outcome.report,
+        args.format,
+        args.output.is_none(),
+    );
+
     say(progress, &format!("writing {} report", args.format.name()));
     let written = emit(args.output.as_deref(), "write report", |out| {
-        render::render_report(&outcome.report, args.format, out)
+        render::render_report(&outcome.report, &source, style, args.format, out)
     });
 
     if !outcome.errors.is_empty() {
@@ -299,9 +339,15 @@ fn compare_command(args: &CompareArgs) -> Result<ExitCode, CliError> {
     let before: Report = read_report(&args.before)?;
     let after: Report = read_report(&args.after)?;
     let comparison = compare::compare(&before, &after);
+    let (source, style) = render_context(
+        args.source.as_deref(),
+        &after,
+        args.format,
+        args.output.is_none(),
+    );
 
     emit(args.output.as_deref(), "write comparison", |out| {
-        render::render_comparison(&comparison, args.format, out)
+        render::render_comparison(&comparison, &source, style, args.format, out)
     })?;
 
     if !comparison.compatible || !comparison.complete {
@@ -338,13 +384,123 @@ fn review_apply_command(args: &ReviewApplyArgs) -> Result<ExitCode, CliError> {
 
     let report = read_report(&args.report)?;
     let ledger: ReviewLedger = read_json(&args.ledger)?;
-    let reviewed = review::apply_ledger(&report, &ledger)?;
+    let mut reviewed = review::apply_ledger(&report, &ledger)?.0;
+    let (source, style) = render_context(
+        args.source.as_deref(),
+        &reviewed,
+        args.format,
+        args.output.is_none(),
+    );
+
+    if args.format == Format::Github
+        && let Some(prefix) = github_path_prefix(args.source.as_deref().unwrap_or(Path::new(".")))
+    {
+        prefix_paths(&mut reviewed, &prefix);
+    }
 
     emit(args.output.as_deref(), "write report", |out| {
-        render::render_report(&reviewed.0, args.format, out)
+        render::render_report(&reviewed, &source, style, args.format, out)
     })?;
 
     Ok(ExitCode::SUCCESS)
+}
+
+fn render_command(args: &RenderArgs) -> Result<ExitCode, CliError> {
+    if let Some(output) = &args.output {
+        validate_output(output, &[&args.report])?;
+    }
+
+    let mut report = read_report(&args.report)?;
+    let (source, style) = render_context(
+        args.source.as_deref(),
+        &report,
+        args.format,
+        args.output.is_none(),
+    );
+    let source = source.named(report_name(args.source.as_deref(), Some(&args.report)));
+
+    if args.format == Format::Github
+        && let Some(prefix) = github_path_prefix(args.source.as_deref().unwrap_or(Path::new(".")))
+    {
+        prefix_paths(&mut report, &prefix);
+    }
+
+    emit(args.output.as_deref(), "write report", |out| {
+        render::render_report(&report, &source, style, args.format, out)
+    })?;
+
+    Ok(ExitCode::SUCCESS)
+}
+
+/// The audited directory's name, else the report file's stem, else `report`.
+fn report_name(root: Option<&Path>, report_file: Option<&Path>) -> String {
+    root.and_then(|root| fs::canonicalize(root).ok())
+        .and_then(|root| {
+            root.file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+        })
+        .or_else(|| {
+            report_file
+                .and_then(Path::file_stem)
+                .map(|stem| stem.to_string_lossy().into_owned())
+        })
+        .unwrap_or_else(|| "report".to_owned())
+}
+
+/// Where code lives and whether color is allowed, for one render.
+///
+/// `root` is the directory report paths are relative to. Links need a clean
+/// checkout with a known commit and a GitHub origin (or the Actions
+/// environment); without them locations print as plain `file:line`.
+fn render_context(
+    root: Option<&Path>,
+    report: &Report,
+    format: Format,
+    to_stdout: bool,
+) -> (Source, Style) {
+    let color = to_stdout
+        && format == Format::Text
+        && io::stdout().is_terminal()
+        && env::var_os("NO_COLOR").is_none_or(|value| value.is_empty());
+    let style = Style { color };
+
+    let origin = &report.provenance.source;
+    let mut link_base = None;
+    let mut path_prefix = String::new();
+
+    if origin.git_known && !origin.dirty && !origin.commit.is_empty() {
+        let actions = env::var("GITHUB_ACTIONS").is_ok_and(|value| value == "true");
+        let hosted = env::var("GITHUB_SERVER_URL")
+            .ok()
+            .zip(env::var("GITHUB_REPOSITORY").ok())
+            .filter(|(server, repository)| actions && !server.is_empty() && !repository.is_empty());
+
+        if let Some((server, repository)) = hosted {
+            link_base = Some(format!(
+                "{}/{repository}/blob/{}",
+                server.trim_end_matches('/'),
+                origin.commit
+            ));
+            path_prefix = root.and_then(github_path_prefix).unwrap_or_default();
+        } else if let Some(root) = root {
+            link_base = provenance::github_blob_base(root, &origin.commit);
+            path_prefix = provenance::repository_prefix(root).unwrap_or_default();
+        }
+    }
+
+    // GitHub-format reports are rewritten to workspace-relative paths first.
+    if format == Format::Github {
+        path_prefix.clear();
+    }
+
+    if !path_prefix.is_empty() && !path_prefix.ends_with('/') {
+        path_prefix.push('/');
+    }
+
+    let source = Source::new(root.map(Path::to_path_buf), link_base, path_prefix)
+        .named(report_name(root, None));
+
+    (source, style)
 }
 
 /// Decodes one JSON value, rejecting unknown fields and trailing data.

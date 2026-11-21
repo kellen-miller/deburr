@@ -1,9 +1,12 @@
-//! Report and comparison output in text, JSON, HTML, and GitHub formats.
+//! Report and comparison output in text, markdown, HTML, GitHub, and JSON.
 //!
-//! The renderers show facts, not conclusions: every function, finding, clone,
-//! review decision, and coverage count in a report appears in each format.
-//! The small formatting functions here are the one place that decides how a
-//! location, a review decision, or a measurement reads, so all formats agree.
+//! JSON is the complete, stable contract. The four human formats (text,
+//! markdown, HTML, GitHub) render the one shared [`summary`] (verdict, hints,
+//! ranked worklist, concentration) at different depths and carry no stability
+//! promise. [`Source`] says where code lives (links, snippets) and [`Style`]
+//! whether color is allowed; both depend on where rendering happens, not on
+//! the analysis. The small formatting functions here decide how a location,
+//! a review decision, or a measurement reads, so all formats agree.
 
 use std::borrow::Cow;
 use std::io::{self, Write};
@@ -19,13 +22,18 @@ use crate::review;
 
 pub mod github;
 pub mod html;
+pub mod source;
+pub mod summary;
 pub mod text;
+
+pub use source::Source;
 
 /// Output formats accepted by `--format`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum Format {
     Text,
     Json,
+    Markdown,
     Html,
     Github,
 }
@@ -37,10 +45,17 @@ impl Format {
         match self {
             Self::Text => "text",
             Self::Json => "json",
+            Self::Markdown => "markdown",
             Self::Html => "html",
             Self::Github => "github",
         }
     }
+}
+
+/// Whether ANSI color may be written. Only the text renderer reads it.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Style {
+    pub color: bool,
 }
 
 /// Writes `value` as pretty JSON followed by a newline.
@@ -58,12 +73,19 @@ pub fn write_json<T: Serialize>(value: &T, out: &mut dyn Write) -> io::Result<()
 /// # Errors
 ///
 /// Returns an I/O error when writing fails.
-pub fn render_report(report: &Report, format: Format, out: &mut dyn Write) -> io::Result<()> {
+pub fn render_report(
+    report: &Report,
+    source: &Source,
+    style: Style,
+    format: Format,
+    out: &mut dyn Write,
+) -> io::Result<()> {
     match format {
-        Format::Text => text::report(report, out),
+        // Markdown renders as text until its own renderer lands.
+        Format::Text | Format::Markdown => text::report(report, source, style, out),
         Format::Json => write_json(report, out),
-        Format::Html => html::report(report, out),
-        Format::Github => github::report(report, out),
+        Format::Html => html::report(report, source, style, out),
+        Format::Github => github::report(report, source, style, out),
     }
 }
 
@@ -74,14 +96,17 @@ pub fn render_report(report: &Report, format: Format, out: &mut dyn Write) -> io
 /// Returns an I/O error when writing fails.
 pub fn render_comparison(
     comparison: &Comparison,
+    source: &Source,
+    style: Style,
     format: Format,
     out: &mut dyn Write,
 ) -> io::Result<()> {
     match format {
-        Format::Text => text::comparison(comparison, out),
+        // Markdown renders as text until its own renderer lands.
+        Format::Text | Format::Markdown => text::comparison(comparison, source, style, out),
         Format::Json => write_json(comparison, out),
-        Format::Html => html::comparison(comparison, out),
-        Format::Github => github::comparison(comparison, out),
+        Format::Html => html::comparison(comparison, source, style, out),
+        Format::Github => github::comparison(comparison, source, style, out),
     }
 }
 
