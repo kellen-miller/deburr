@@ -4,7 +4,6 @@
 # index, for example "web/app.ts#1"), and one field, with the reason it is
 # allowed. Never accept a whole category of difference. Permitted reasons:
 #
-#   - invalid literal lexing that go/parser rejects and tree-sitter accepts
 #   - TypeScript parse-error files' code-line counts (the Go version reports
 #     zero; Rust counts every file it read)
 #   - duplicate-branch findings that differ only because the Go version

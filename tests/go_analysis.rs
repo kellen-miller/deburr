@@ -6,11 +6,13 @@
 //! Go tooling skips them; deburr does not evaluate build tags.
 
 use std::collections::BTreeMap;
+use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
 use deburr::audit::{AuditOptions, AuditOutcome, audit};
 use deburr::report::{Category, FileStatus, Function, Report};
+use deburr::syntax::{self, Language};
 
 const FLOAT_TOLERANCE: f64 = 1e-9;
 
@@ -461,6 +463,251 @@ fn files_that_fail_the_syntax_check_yield_no_functions() {
     assert_eq!(outcome.errors.len(), 2);
     assert_eq!(outcome.report.coverage.parse_errors, 2);
     assert_eq!(ids(&outcome.report), ["sample/good.go::Good"]);
+}
+
+fn syntax_error(source: &str) -> Option<String> {
+    syntax::parse(Language::Go, source.as_bytes().to_vec())
+        .err()
+        .map(|error| error.to_string())
+}
+
+fn go_source_with_literal(literal: &str) -> String {
+    format!("package a\n\nvar x = {literal}\n")
+}
+
+/// Literals `go/parser` accepts, from the Go distribution's
+/// `test/char_lit1.go` and `test/fixedbugs/bug068.go` and the language
+/// specification's escape rules.
+const VALID_LITERALS: &[&str] = &[
+    r#""\a\b\f\n\r\t\v\\\"""#,
+    r"'\''",
+    r"'\a'",
+    r"'\b'",
+    r"'\f'",
+    r"'\n'",
+    r"'\r'",
+    r"'\t'",
+    r"'\v'",
+    r"'\\'",
+    r#""\377""#,
+    r"'\000'",
+    r"'\377'",
+    r#""\x41\xff\xFF""#,
+    r"'\xff'",
+    r#""\x414""#,
+    r#""\u00e9\U0001F600""#,
+    r"'\ud7ff'",
+    r"'\ue000'",
+    r"'\U0010ffff'",
+    r"'\U00000000'",
+    "'é'",
+    "'世'",
+    r#"'"'"#,
+    r#""'""#,
+    "\"\"",
+    "`\\q \\400 \\ud800`",
+];
+
+/// Literals `go/parser` rejects that tree-sitter-go parses without error.
+const INVALID_LITERALS: &[&str] = &[
+    // Unknown escapes, and quotes escaped in the wrong kind of literal.
+    r#""\q""#,
+    r#""\'""#,
+    r#"'\"'"#,
+    r#""\8""#,
+    // Octal escapes need exactly three digits and a value of at most 255.
+    r#""\1""#,
+    r#""\12""#,
+    r#""\400""#,
+    r"'\400'",
+    r"'\777'",
+    // `\u` and `\U` must be Unicode scalar values.
+    r#""\ud800""#,
+    r#""\udfff""#,
+    r"'\ud800'",
+    r"'\udfff'",
+    r#""\U0000d800""#,
+    r#""\U00110000""#,
+    r"'\U00110000'",
+    r"'\Uffffffff'",
+    // A raw newline in a rune literal.
+    "'\n'",
+];
+
+/// Rune literals that are not one character or escape, or that use an escape
+/// tree-sitter-go does not lex; both versions report an error, but the tree
+/// reports an error node, so the position is not the literal's.
+const BAD_RUNES: &[&str] = &["'ab'", "''", "'\\n\\n'", "'é\\n'", "'\\q'", "'\\8'"];
+
+#[test]
+fn valid_string_and_rune_literals_parse() {
+    for literal in VALID_LITERALS {
+        assert_eq!(
+            syntax_error(&go_source_with_literal(literal)),
+            None,
+            "{literal}"
+        );
+    }
+}
+
+#[test]
+fn invalid_string_and_rune_literals_are_syntax_errors_at_the_literal() {
+    for literal in INVALID_LITERALS {
+        assert_eq!(
+            syntax_error(&go_source_with_literal(literal)).as_deref(),
+            Some("syntax error at 3:9"),
+            "{literal:?}"
+        );
+    }
+
+    for literal in BAD_RUNES {
+        assert!(
+            syntax_error(&go_source_with_literal(literal)).is_some(),
+            "{literal}"
+        );
+    }
+}
+
+#[test]
+fn the_first_invalid_literal_is_reported_inside_function_bodies() {
+    let source = "package a\n\nfunc F() (string, rune) {\n\treturn \"ok\\n\", 'a'\n}\n\nfunc G() string {\n\tx := 1\n\treturn \"\\q\" + \"\\z\"\n}\n";
+
+    assert_eq!(syntax_error(source).as_deref(), Some("syntax error at 9:9"));
+}
+
+#[test]
+fn audit_reports_invalid_go_literals_as_parse_errors() {
+    let dir = tempfile::tempdir().expect("temp dir");
+
+    fs::write(
+        dir.path().join("bad.go"),
+        "package a\n\nfunc F() string {\n\treturn \"\\ud800\"\n}\n",
+    )
+    .expect("write fixture");
+    fs::write(
+        dir.path().join("good.go"),
+        "package a\n\nfunc F() int {\n\treturn 1\n}\n",
+    )
+    .expect("write fixture");
+
+    let outcome = audit_root(dir.path());
+    let find = |path: &str| outcome.report.files.iter().find(|file| file.path == path);
+    let bad = find("bad.go").expect("bad.go is reported");
+
+    assert_eq!(bad.status, FileStatus::ParseError);
+    assert_eq!(bad.error, "syntax error at 4:9");
+    assert_eq!(bad.lines, 5);
+    assert_eq!(
+        find("good.go").map(|file| file.status),
+        Some(FileStatus::Analyzed)
+    );
+    assert_eq!(outcome.report.coverage.parse_errors, 1);
+    assert_eq!(outcome.errors.len(), 1);
+    assert!(
+        outcome.report.functions.iter().all(|f| f.path != "bad.go"),
+        "a file that fails the syntax check yields no functions"
+    );
+}
+
+/// A statement list in which `return` and `g()` read as one statement or as
+/// two, depending on a line break. `{}` marks where they go.
+struct BreakCase {
+    name: &'static str,
+    language: Language,
+    template: &'static str,
+}
+
+const BREAK_CASES: &[BreakCase] = &[
+    BreakCase {
+        name: "go expression_case",
+        language: Language::Go,
+        template: "package a\nfunc f(x int) int {\n switch x {\n case 0:\n {}\n }\n}\n",
+    },
+    BreakCase {
+        name: "go default_case",
+        language: Language::Go,
+        template: "package a\nfunc f(x int) int {\n switch x {\n default:\n {}\n }\n}\n",
+    },
+    BreakCase {
+        name: "go type_case",
+        language: Language::Go,
+        template: "package a\nfunc f(x any) int {\n switch x.(type) {\n case int:\n {}\n }\n}\n",
+    },
+    BreakCase {
+        name: "go communication_case",
+        language: Language::Go,
+        template: "package a\nfunc f(c chan int) int {\n select {\n case <-c:\n {}\n }\n}\n",
+    },
+    BreakCase {
+        name: "go labeled statement",
+        language: Language::Go,
+        template: "package a\nfunc f() int {\nL:\n for {\n break L\n }\n {}\n}\n",
+    },
+    BreakCase {
+        name: "go func literal body",
+        language: Language::Go,
+        template: "package a\nvar f = func() int {\n {}\n}\n",
+    },
+    BreakCase {
+        name: "ts switch_case",
+        language: Language::TypeScript,
+        template: "function f(x) {\n switch (x) {\n case 0:\n {}\n }\n}\n",
+    },
+    BreakCase {
+        name: "ts switch_default",
+        language: Language::TypeScript,
+        template: "function f(x) {\n switch (x) {\n default:\n {}\n }\n}\n",
+    },
+    BreakCase {
+        name: "ts labeled statement",
+        language: Language::TypeScript,
+        template: "function f() {\n L: for (;;) { break L }\n {}\n}\n",
+    },
+    BreakCase {
+        name: "ts labeled body",
+        language: Language::TypeScript,
+        template: "function f() {\n L: {\n {}\n }\n}\n",
+    },
+    BreakCase {
+        name: "ts class static block",
+        language: Language::TypeScript,
+        template: "class C {\n static {\n {}\n }\n}\n",
+    },
+];
+
+/// The text of every code token, including synthetic terminators.
+fn token_texts(language: Language, source: &str) -> Vec<String> {
+    let parsed = syntax::parse(language, source.as_bytes().to_vec())
+        .or_else(|error| error.recovered().map_err(|_| ()))
+        .expect("tree-sitter produces a tree");
+
+    parsed
+        .tokens
+        .iter()
+        .map(|token| String::from_utf8_lossy(parsed.token_text(token)).into_owned())
+        .collect()
+}
+
+#[test]
+fn a_line_break_after_a_statement_changes_the_tokens_in_every_statement_list() {
+    for case in BREAK_CASES {
+        let split = token_texts(case.language, &case.template.replace("{}", "return\n g()"));
+        let joined = token_texts(case.language, &case.template.replace("{}", "return g()"));
+
+        assert_ne!(split, joined, "{}: {split:?}", case.name);
+    }
+}
+
+#[test]
+fn switch_case_values_get_no_terminator_but_their_bodies_do() {
+    assert_eq!(
+        token_texts(
+            Language::TypeScript,
+            "switch (x) {\n  case 0:\n    a()\n    b();\n  default:\n    c()\n}\n"
+        )
+        .join(" "),
+        "switch ( x ) { case 0 : a ( ) ; b ( ) ; default : c ( ) ; } ;"
+    );
 }
 
 /// Drops a trailing `#<digits>` occurrence suffix.

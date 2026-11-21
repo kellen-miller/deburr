@@ -455,11 +455,8 @@ fn audit_reports_structural_go_errors_as_parse_errors() {
 
 #[test]
 fn invalid_octal_literal_is_reported_as_a_syntax_error() {
-    // Documents actual behavior: go/parser rejects `08` for its digits, and
-    // tree-sitter-go splits it into `0` and `8`, which is an ERROR node, so
-    // both versions report a parse error here. Other lexical-validity gaps
-    // (for example out-of-range escapes) are not re-checked and are accepted
-    // divergences.
+    // go/parser rejects `08` for its digits, and tree-sitter-go splits it
+    // into `0` and `8`, which is an ERROR node, so the tree check catches it.
     assert_eq!(
         syntax_error(Language::Go, "package a\n\nvar x = 08\n").as_deref(),
         Some("syntax error at 3:9")
