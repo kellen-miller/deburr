@@ -158,6 +158,93 @@ fn attributes_decide_which_functions_are_tests() {
             category: Category::Production,
         },
     ];
+
+    assert_attribute_cases(&cases);
+}
+
+#[test]
+fn comments_and_spacing_inside_attributes_do_not_change_classification() {
+    let cases = [
+        AttributeCase {
+            attribute: "#[cfg(not /* explanation */ (test))]",
+            category: Category::Production,
+        },
+        AttributeCase {
+            attribute: "#[cfg(not // explanation\n(test))]",
+            category: Category::Production,
+        },
+        AttributeCase {
+            attribute: "#[cfg( not ( test ) )]",
+            category: Category::Production,
+        },
+        AttributeCase {
+            attribute: "#[cfg(\n    not(\n        test\n    )\n)]",
+            category: Category::Production,
+        },
+        AttributeCase {
+            attribute: "#[cfg(all(unix, not /* c */ (test)))]",
+            category: Category::Production,
+        },
+        AttributeCase {
+            attribute: "#[cfg(test)]",
+            category: Category::Test,
+        },
+        AttributeCase {
+            attribute: "#[cfg /* c */ (test)]",
+            category: Category::Test,
+        },
+        AttributeCase {
+            attribute: "#[ cfg ( /* c */ test ) ]",
+            category: Category::Test,
+        },
+        AttributeCase {
+            attribute: "#[cfg(all(unix, /* c */ test))]",
+            category: Category::Test,
+        },
+        AttributeCase {
+            attribute: "#[cfg(any(\n    feature = \"x\",\n    test,\n))]",
+            category: Category::Test,
+        },
+        AttributeCase {
+            attribute: "#[test]",
+            category: Category::Test,
+        },
+        AttributeCase {
+            attribute: "#[ test ]",
+            category: Category::Test,
+        },
+        AttributeCase {
+            attribute: "#[tokio :: test]",
+            category: Category::Test,
+        },
+        AttributeCase {
+            attribute: "#[tokio\n    ::\n    test]",
+            category: Category::Test,
+        },
+        AttributeCase {
+            attribute: "#[tokio /* c */ :: /* d */ test]",
+            category: Category::Test,
+        },
+        AttributeCase {
+            attribute: "#[sqlx :: test ( migrations = \"./m\" )]",
+            category: Category::Test,
+        },
+        AttributeCase {
+            attribute: "#[tokio :: main]",
+            category: Category::Production,
+        },
+        AttributeCase {
+            attribute: "#[test_case]",
+            category: Category::Production,
+        },
+    ];
+
+    assert_attribute_cases(&cases);
+}
+
+/// Writes each attribute above its own function `f<index>` in one file and
+/// checks the category of every function.
+fn assert_attribute_cases(cases: &[AttributeCase]) {
     let dir = tempfile::tempdir().expect("create temp dir");
     let mut source = String::new();
 
@@ -171,16 +258,113 @@ fn attributes_decide_which_functions_are_tests() {
 
     write(dir.path(), "src/lib.rs", &source);
 
-    let report = audit_root(dir.path(), &options(true, None)).report;
+    let outcome = audit_root(dir.path(), &options(true, None));
+
+    assert_eq!(outcome.report.coverage.parse_errors, 0);
 
     for (index, case) in cases.iter().enumerate() {
         assert_eq!(
-            category_of(&report, &format!("f{index}")),
+            category_of(&outcome.report, &format!("f{index}")),
             case.category,
             "{}",
             case.attribute
         );
     }
+}
+
+#[test]
+fn an_inner_cfg_test_attribute_makes_the_whole_file_test_code() {
+    let dir = tempfile::tempdir().expect("create temp dir");
+
+    write(
+        dir.path(),
+        "src/test_utils.rs",
+        "#![cfg(test)]\n\nuse std::fmt;\n\npub fn assert_close(a: f32, b: f32) {\n    if a != b {\n        panic!(\"far\");\n    }\n}\n\npub fn other() {\n    let _ = || 1;\n}\n",
+    );
+    write(
+        dir.path(),
+        "src/lib.rs",
+        "pub fn prod() {\n    let _ = 1;\n}\n",
+    );
+
+    let outcome = audit_root(dir.path(), &options(true, None));
+    let report = outcome.report;
+    let file = report
+        .files
+        .iter()
+        .find(|file| file.path == "src/test_utils.rs")
+        .expect("src/test_utils.rs reported");
+
+    assert_eq!(report.coverage.parse_errors, 0);
+    assert_eq!(file.category, Category::Production);
+    assert_eq!(file.inline_test_code_lines, file.code_lines);
+    assert!(file.code_lines > 0);
+    assert_eq!(category_of(&report, "assert_close"), Category::Test);
+    assert_eq!(category_of(&report, "other"), Category::Test);
+    assert_eq!(category_of(&report, "other::{closure#1}"), Category::Test);
+    assert_eq!(category_of(&report, "prod"), Category::Production);
+
+    // Excluding tests drops every function of that file, and its lines.
+    let excluded = audit_root(dir.path(), &options(false, None)).report;
+
+    assert_eq!(excluded.functions.len(), 1);
+    assert_eq!(excluded.functions[0].name, "prod");
+    assert_eq!(excluded.metrics.test.code_lines, 0);
+}
+
+#[test]
+fn an_inner_cfg_test_attribute_in_a_mod_body_makes_that_module_test_code() {
+    let dir = tempfile::tempdir().expect("create temp dir");
+
+    write(
+        dir.path(),
+        "src/lib.rs",
+        "pub fn before() {}\n\nmod support {\n    #![cfg(test)]\n\n    pub fn fixture() {}\n}\n\n/// Not test code.\nmod real {\n    #![allow(dead_code)]\n\n    pub fn kept() {}\n}\n\nmod negated {\n    #![cfg(not(test))]\n\n    pub fn kept_too() {}\n}\n\npub fn after() {}\n",
+    );
+
+    let report = audit_root(dir.path(), &options(true, None)).report;
+    let lib = report
+        .files
+        .iter()
+        .find(|file| file.path == "src/lib.rs")
+        .expect("src/lib.rs reported");
+
+    assert_eq!(category_of(&report, "before"), Category::Production);
+    assert_eq!(category_of(&report, "support::fixture"), Category::Test);
+    assert_eq!(category_of(&report, "real::kept"), Category::Production);
+    assert_eq!(
+        category_of(&report, "negated::kept_too"),
+        Category::Production
+    );
+    assert_eq!(category_of(&report, "after"), Category::Production);
+    // `mod support { #![cfg(test)] pub fn fixture() {} }` is four code lines.
+    assert_eq!(lib.inline_test_code_lines, 4);
+}
+
+#[test]
+fn an_inner_cfg_test_attribute_is_excluded_from_production_duplication() {
+    let dir = tempfile::tempdir().expect("create temp dir");
+
+    write(
+        dir.path(),
+        "src/lib.rs",
+        &format!("pub fn production() -> u32 {{\n{SHARED_BODY}}}\n"),
+    );
+    write(
+        dir.path(),
+        "src/fixtures.rs",
+        &format!("#![cfg(test)]\n\npub fn fixture() -> u32 {{\n{SHARED_BODY}}}\n"),
+    );
+
+    let report = audit_root(dir.path(), &options(true, Some(clone_settings()))).report;
+
+    // Were the fixture file production code, it would pair with `production`.
+    assert_eq!(report.duplication.status, DuplicationStatus::Measured);
+    assert!(
+        report.duplication.clones.is_empty(),
+        "{:#?}",
+        report.duplication.clones
+    );
 }
 
 #[test]

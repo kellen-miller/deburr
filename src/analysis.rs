@@ -517,7 +517,13 @@ fn count_ownership(
             signals.panic_macros += 1;
         }
     } else if kind == ownership.call_kind
-        && let Some(callee) = node.child_by_field_name("function")
+        && let Some(callee) = node.child_by_field_name("function").map(|callee| {
+            if callee.kind() == ownership.generic_callee_kind {
+                callee.child_by_field_name("function").unwrap_or(callee)
+            } else {
+                callee
+            }
+        })
         && callee.kind() == ownership.method_kind
         && let Some(method) = callee.child_by_field_name("field")
     {

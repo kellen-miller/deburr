@@ -68,6 +68,7 @@ pub static RULES: LanguageRules = LanguageRules {
     ownership: Some(OwnershipRules {
         call_kind: "call_expression",
         method_kind: "field_expression",
+        generic_callee_kind: "generic_function",
         clone_like: &[
             CallShape {
                 method: "clone",
@@ -171,6 +172,13 @@ fn decision_weight(node: Node<'_>, source: &[u8]) -> u32 {
 /// - the item is a function and an attribute's path ends in `test`
 ///   (`#[test]`, `#[tokio::test]`, `#[sqlx::test(..)]`).
 ///
+/// An inner `#![cfg(test)]` at the top of a file makes the whole file a test
+/// region; inside the body of a `mod` (or `impl`, `trait`) it makes that item
+/// one.
+///
+/// Attributes are read from the parsed tree, so comments, whitespace, and
+/// newlines inside an attribute never change what it means.
+///
 /// A region is never searched for nested regions: it is test code throughout.
 fn test_regions(root: Node<'_>, source: &[u8]) -> Vec<Range<usize>> {
     let mut regions = Vec::new();
@@ -178,26 +186,37 @@ fn test_regions(root: Node<'_>, source: &[u8]) -> Vec<Range<usize>> {
 
     while let Some(parent) = pending.pop() {
         let mut cursor = parent.walk();
+        let children: Vec<Node<'_>> = parent.named_children(&mut cursor).collect();
+
+        if children.iter().any(|child| {
+            child.kind() == "inner_attribute_item" && attribute_facts(*child, source).cfg_test
+        }) {
+            if parent.kind() == "source_file" {
+                return vec![parent.byte_range()];
+            }
+
+            if parent.kind() == "declaration_list"
+                && let Some(item) = parent.parent()
+            {
+                regions.push(item.byte_range());
+
+                continue;
+            }
+        }
+
         let mut run_start = None;
         let mut cfg_test = false;
         let mut test_function = false;
 
-        for child in parent.named_children(&mut cursor) {
+        for child in children {
             match child.kind() {
                 "attribute_item" => {
                     run_start.get_or_insert(child.start_byte());
 
-                    if let Some(attribute) = child.named_child(0)
-                        && let Some(path) = attribute.named_child(0)
-                    {
-                        let path = &source[path.byte_range()];
+                    let facts = attribute_facts(child, source);
 
-                        cfg_test |= path == b"cfg"
-                            && attribute
-                                .child_by_field_name("arguments")
-                                .is_some_and(|arguments| names_test(arguments, source));
-                        test_function |= path.rsplit(|&byte| byte == b':').next() == Some(b"test");
-                    }
+                    cfg_test |= facts.cfg_test;
+                    test_function |= facts.test_function;
                 }
                 "line_comment" | "block_comment" => {}
                 kind => {
@@ -221,6 +240,51 @@ fn test_regions(root: Node<'_>, source: &[u8]) -> Vec<Range<usize>> {
     regions
 }
 
+/// What one attribute says about the item it applies to.
+#[derive(Default)]
+struct AttributeFacts {
+    /// `cfg(..)` naming `test` outside `not(..)`.
+    cfg_test: bool,
+    /// The attribute's path ends in `test`.
+    test_function: bool,
+}
+
+/// Reads an `attribute_item` or `inner_attribute_item` from its parsed path
+/// segments and tokens.
+fn attribute_facts(item: Node<'_>, source: &[u8]) -> AttributeFacts {
+    let mut cursor = item.walk();
+    let Some(attribute) = item
+        .named_children(&mut cursor)
+        .find(|child| child.kind() == "attribute")
+    else {
+        return AttributeFacts::default();
+    };
+    let mut inner = attribute.walk();
+    let Some(path) = attribute
+        .named_children(&mut inner)
+        .find(|child| !is_comment(*child))
+    else {
+        return AttributeFacts::default();
+    };
+    let last_segment = match path.kind() {
+        "scoped_identifier" => path.child_by_field_name("name").unwrap_or(path),
+        _ => path,
+    };
+
+    AttributeFacts {
+        cfg_test: path.kind() == "identifier"
+            && &source[path.byte_range()] == b"cfg"
+            && attribute
+                .child_by_field_name("arguments")
+                .is_some_and(|arguments| names_test(arguments, source)),
+        test_function: &source[last_segment.byte_range()] == b"test",
+    }
+}
+
+fn is_comment(node: Node<'_>) -> bool {
+    matches!(node.kind(), "line_comment" | "block_comment")
+}
+
 /// Whether a `cfg` predicate names `test` anywhere outside a `not(..)`.
 fn names_test(predicate: Node<'_>, source: &[u8]) -> bool {
     let mut cursor = predicate.walk();
@@ -228,6 +292,7 @@ fn names_test(predicate: Node<'_>, source: &[u8]) -> bool {
 
     for child in predicate.named_children(&mut cursor) {
         match child.kind() {
+            "line_comment" | "block_comment" => {}
             "identifier" => {
                 let name = &source[child.byte_range()];
 
@@ -308,25 +373,66 @@ fn unit_name(node: Node<'_>, source: &[u8], enclosing: Option<Enclosing<'_, '_>>
 /// `Type` for an inherent `impl`, `<Type as Trait>` for a trait `impl`, with
 /// generic arguments dropped from both.
 fn impl_path(item: Node<'_>, source: &[u8]) -> String {
-    let ty = field_text(item, "type", source)
-        .map(|text| without_generics(&text))
+    let ty = item
+        .child_by_field_name("type")
+        .map(|node| without_type_arguments(node, source))
         .unwrap_or_default();
 
-    match field_text(item, "trait", source) {
-        Some(text) => format!("<{ty} as {}>", without_generics(&text)),
+    match item.child_by_field_name("trait") {
+        Some(node) => format!("<{ty} as {}>", without_type_arguments(node, source)),
         None => ty,
     }
 }
 
-/// `text` up to its first `<`, whitespace collapsed. A type that starts with
-/// `<` (`<T as Trait>::Output`) is kept whole.
-fn without_generics(text: &str) -> String {
-    let head = match text.find('<') {
-        Some(index) if index > 0 => &text[..index],
-        _ => text,
-    };
+/// The text of a type with every `type_arguments` node (and comment) cut out
+/// and whitespace collapsed, so `Foo<T>` is `Foo` but tuple, array,
+/// reference, pointer, and qualified structure stays:
+/// `(&'a Mesh<f32>, &'a Mesh<f32>)` is `(&'a Mesh, &'a Mesh)` and
+/// `<A as B>::C` is whole.
+fn without_type_arguments(ty: Node<'_>, source: &[u8]) -> String {
+    let mut cut: Vec<Range<usize>> = Vec::new();
+    let mut pending = vec![ty];
 
-    head.split_whitespace().collect::<Vec<_>>().join(" ")
+    while let Some(node) = pending.pop() {
+        if node.kind() == "type_arguments" || is_comment(node) {
+            cut.push(node.byte_range());
+
+            continue;
+        }
+
+        let mut cursor = node.walk();
+
+        pending.extend(node.children(&mut cursor));
+    }
+
+    cut.sort_by_key(|range| range.start);
+
+    let mut text = String::new();
+    let mut at = ty.start_byte();
+
+    for range in cut {
+        text.push_str(&String::from_utf8_lossy(&source[at..range.start]));
+
+        // A turbofish `Vec::<u8>` loses its `::` with its arguments.
+        if source[range.start] == b'<' {
+            if text.trim_end().ends_with("::") {
+                text.truncate(text.trim_end().len() - 2);
+            }
+        } else {
+            // A comment separates the tokens around it.
+            text.push(' ');
+        }
+
+        at = range.end;
+    }
+
+    text.push_str(&String::from_utf8_lossy(&source[at..ty.end_byte()]));
+
+    text.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .replace(" ::", "::")
+        .replace(":: ", "::")
 }
 
 fn field_text(node: Node<'_>, field: &str, source: &[u8]) -> Option<String> {

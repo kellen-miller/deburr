@@ -154,6 +154,42 @@ fn clone_like_calls_are_method_calls_with_no_arguments() {
 }
 
 #[test]
+fn turbofish_method_calls_count_their_signals() {
+    assert_cases(&[
+        Case {
+            label: "turbofish cloned and to_owned",
+            source: "fn f(v: &[u8], a: &str) {\n    v.iter().cloned::<u8>();\n    a.to_owned::<String>();\n}\n",
+            expected: counts(2, 0, 0, 0),
+        },
+        Case {
+            label: "turbofish clone with spacing and a comment",
+            source: "fn f(a: &String) {\n    a.clone :: <String>();\n    a.clone::</* t */ String>();\n}\n",
+            expected: counts(2, 0, 0, 0),
+        },
+        Case {
+            label: "turbofish unwrap and expect",
+            source: "fn f(o: Option<u8>, r: Result<u8, u8>) {\n    o.unwrap::<u8>();\n    r.expect::<u8>(\"why\");\n}\n",
+            expected: counts(0, 2, 0, 0),
+        },
+        Case {
+            label: "turbofish keeps the argument-count check",
+            source: "fn f(a: &String, o: Option<u8>) {\n    a.clone::<String>(a);\n    o.unwrap::<u8>(1);\n    o.expect::<u8>();\n}\n",
+            expected: counts(0, 0, 0, 0),
+        },
+        Case {
+            label: "a turbofish path call is not a method call",
+            source: "fn f(v: &Vec<u8>) -> Vec<u8> {\n    Vec::<u8>::clone(v)\n}\n",
+            expected: counts(0, 0, 0, 0),
+        },
+        Case {
+            label: "a turbofish call of a plain function is not a method call",
+            source: "fn f() -> u8 {\n    clone::<u8>()\n}\n",
+            expected: counts(0, 0, 0, 0),
+        },
+    ]);
+}
+
+#[test]
 fn unwrap_like_calls_need_the_right_argument_count() {
     assert_cases(&[
         Case {
