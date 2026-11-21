@@ -56,6 +56,7 @@ pub static RULES: LanguageRules = LanguageRules {
         // `switch_default` is a different kind and adds nothing.
         "switch_case",
     ],
+    decision_weight: None,
     nesting_kinds: &[
         "if_statement",
         "for_statement",
@@ -66,6 +67,7 @@ pub static RULES: LanguageRules = LanguageRules {
         "ternary_expression",
         "switch_statement",
     ],
+    chained_branch: None,
     binary_kind: "binary_expression",
     short_circuit_operators: &["&&", "||", "??"],
     naming: UnitNaming::Lexical { name: lexical_name },

@@ -11,6 +11,7 @@ use tree_sitter::{Node, Parser, Point};
 use crate::report::Position;
 
 pub mod go;
+pub mod rust;
 pub mod typescript;
 
 /// Source languages deburr can parse.
@@ -19,6 +20,7 @@ pub enum Language {
     Go,
     TypeScript,
     Tsx,
+    Rust,
 }
 
 /// Everything the engine needs to know about one language: node-kind tables
@@ -30,8 +32,15 @@ pub struct LanguageRules {
     pub function_kinds: &'static [&'static str],
     /// Node kinds that each add one decision point.
     pub decision_kinds: &'static [&'static str],
+    /// Extra decision points a node adds beyond `decision_kinds`, for shapes
+    /// a kind alone cannot say (a match arm that is not the catch-all, a
+    /// `let ... else`). `None` when the kind table is enough.
+    pub decision_weight: Option<fn(Node<'_>, &[u8]) -> u32>,
     /// Node kinds that deepen nesting inside their subtree.
     pub nesting_kinds: &'static [&'static str],
+    /// How an `else if` chain nests; `None` when a chained branch nests like
+    /// any other branch.
+    pub chained_branch: Option<ChainedBranch>,
     /// The node kind of a binary expression, whose `operator` field is
     /// checked against `short_circuit_operators`.
     pub binary_kind: &'static str,
@@ -49,6 +58,15 @@ pub struct LanguageRules {
     /// the language's reference parser rejects. Returns the start of the
     /// first offending node. Runs only when the tree has no error nodes.
     pub structure_problem: Option<StructureCheck>,
+}
+
+/// A branch that continues its parent's chain instead of nesting inside it:
+/// the `if` inside an `else` clause stays at the depth of the `if` that heads
+/// the chain.
+#[derive(Debug)]
+pub struct ChainedBranch {
+    pub clause_kind: &'static str,
+    pub branch_kind: &'static str,
 }
 
 /// Finds the start of the first node a language's reference parser rejects.
@@ -175,6 +193,8 @@ pub enum BranchShape {
         /// Whether a function declares exactly one unnamed `bool` result.
         returns_plain_bool: fn(Node<'_>, &[u8]) -> bool,
     },
+    /// No findings are reported (Rust, until its rules are implemented).
+    Disabled,
     /// TypeScript. The other branch is the `else` or, with none, the next
     /// statement in the same block. Either finding may fire in any function,
     /// and at most one fires per `if`.
@@ -192,6 +212,7 @@ impl Language {
         match self {
             Self::Go => &go::RULES,
             Self::TypeScript | Self::Tsx => &typescript::RULES,
+            Self::Rust => &rust::RULES,
         }
     }
 
@@ -200,6 +221,7 @@ impl Language {
             Self::Go => tree_sitter_go::LANGUAGE.into(),
             Self::TypeScript => tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
             Self::Tsx => tree_sitter_typescript::LANGUAGE_TSX.into(),
+            Self::Rust => tree_sitter_rust::LANGUAGE.into(),
         }
     }
 }

@@ -62,9 +62,9 @@ struct Region<'a> {
     content: Vec<u8>,
 }
 
-/// Format names group files so a Go file never pairs with a TypeScript one;
-/// `.ts` and `.tsx` share a token model and a group.
-const FORMATS: [&str; 2] = ["go", "typescript"];
+/// Format names group files so a Go file never pairs with a TypeScript or
+/// Rust one; `.ts` and `.tsx` share a token model and a group.
+const FORMATS: [&str; 3] = ["go", "typescript", "rust"];
 
 /// Finds clones among the files of one category.
 ///
@@ -82,7 +82,7 @@ pub fn detect(
     category: Category,
     settings: &DuplicationSettings,
 ) -> Result<CategoryDuplication, DuplicationError> {
-    let mut groups: [Vec<PreparedSource>; 2] = [Vec::new(), Vec::new()];
+    let mut groups: [Vec<PreparedSource>; 3] = [Vec::new(), Vec::new(), Vec::new()];
 
     for file in files
         .iter()
@@ -108,6 +108,7 @@ pub fn detect(
         let slot = match file.language {
             Language::Go => 0,
             Language::TypeScript | Language::Tsx => 1,
+            Language::Rust => 2,
         };
 
         groups[slot].push(PreparedSource::from_detection_tokens(

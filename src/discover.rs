@@ -140,7 +140,13 @@ impl Discovery {
             };
 
             if file_type.is_dir() {
-                if SKIPPED_DIRECTORIES.contains(&name.as_str()) {
+                // Cargo marks its output directory with a tag file; a
+                // `target` directory without one is ordinary source.
+                let cargo_output = name == "target"
+                    && fs::symlink_metadata(entry.path().join("CACHEDIR.TAG"))
+                        .is_ok_and(|tag| tag.is_file());
+
+                if cargo_output || SKIPPED_DIRECTORIES.contains(&name.as_str()) {
                     self.excluded_directories += 1;
                 } else {
                     pending.push((entry.path(), child));
@@ -287,10 +293,15 @@ fn io_message(error: &io::Error) -> String {
     }
 }
 
-/// `.go` is Go; `.ts .mts .cts` (including `.d.ts`) is TypeScript; `.tsx` is TSX.
+/// `.go` is Go; `.ts .mts .cts` (including `.d.ts`) is TypeScript; `.tsx` is
+/// TSX; `.rs` is Rust.
 fn language_for_path(path: &str) -> Option<Language> {
     if path.ends_with(".go") {
         return Some(Language::Go);
+    }
+
+    if path.ends_with(".rs") {
+        return Some(Language::Rust);
     }
 
     let name = path.rsplit('/').next().unwrap_or(path);
@@ -303,15 +314,14 @@ fn language_for_path(path: &str) -> Option<Language> {
 }
 
 /// Category from the path alone. The first directory component that is
-/// `vendor`, `__tests__` (TypeScript only), or `testdata` decides; else the
-/// file name decides.
+/// `vendor`, `__tests__` (TypeScript only), `tests` or `benches` (Rust only),
+/// or `testdata` decides; else the file name decides.
 fn category_for_path(path: &str) -> Category {
     let mut parts: Vec<&str> = path.split('/').collect();
     let name = parts.pop().unwrap_or_default();
-    let typescript = matches!(
-        language_for_path(path),
-        Some(Language::TypeScript | Language::Tsx)
-    );
+    let language = language_for_path(path);
+    let typescript = matches!(language, Some(Language::TypeScript | Language::Tsx));
+    let rust = language == Some(Language::Rust);
 
     for part in parts {
         if part == "vendor" {
@@ -319,6 +329,10 @@ fn category_for_path(path: &str) -> Category {
         }
 
         if part == "__tests__" && typescript {
+            return Category::Test;
+        }
+
+        if matches!(part, "tests" | "benches") && rust {
             return Category::Test;
         }
 
@@ -344,7 +358,8 @@ fn category_for_path(path: &str) -> Category {
 
 /// Whether the file's header marks it as generated: a line that starts
 /// `// Code generated ` and ends ` DO NOT EDIT.` in a comment before the Go
-/// `package` clause, or among the leading `//` comment lines of TypeScript.
+/// `package` clause, or among the leading `//` comment lines of TypeScript and
+/// Rust; Rust also accepts a leading `// @generated` comment.
 fn is_generated(language: Language, source: &[u8]) -> bool {
     let text = String::from_utf8_lossy(source);
 
@@ -360,7 +375,11 @@ fn is_generated(language: Language, source: &[u8]) -> bool {
                 return false;
             }
 
-            if is_generated_marker(line) {
+            let at_generated = line
+                .strip_prefix("// @generated")
+                .is_some_and(|rest| rest.chars().next().is_none_or(|next| next.is_whitespace()));
+
+            if is_generated_marker(line) || (language == Language::Rust && at_generated) {
                 return true;
             }
         }

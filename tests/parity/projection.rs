@@ -211,6 +211,148 @@ fn pick(object: &Value, names: &[&str]) -> Fields {
         .collect()
 }
 
+fn is_rust_entry(entry: &Value) -> bool {
+    entry["path"]
+        .as_str()
+        .is_some_and(|path| path.ends_with(".rs"))
+}
+
+/// Subtracts one removed file from the coverage totals: the overall row and
+/// the row of its category lose it under `discovered` and its status.
+fn remove_from_coverage(coverage: &mut Value, file: &Value) {
+    let status = match file["status"].as_str().unwrap_or_default() {
+        "analyzed" => "analyzed",
+        "excluded" => "excluded",
+        "unsupported" => "unsupported",
+        "read_error" => "read_errors",
+        "parse_error" => "parse_errors",
+        _ => "",
+    };
+    let category = file["category"].as_str().unwrap_or_default();
+
+    for field in ["discovered", status] {
+        if field.is_empty() {
+            continue;
+        }
+
+        decrement(&mut coverage[field]);
+
+        if let Some(by_category) = coverage["by_category"].as_array_mut() {
+            for row in by_category
+                .iter_mut()
+                .filter(|row| row["category"] == category)
+            {
+                decrement(&mut row[field]);
+            }
+        }
+    }
+}
+
+fn decrement(count: &mut Value) {
+    if let Some(value) = count.as_i64() {
+        *count = Value::from(value - 1);
+    }
+}
+
+/// Function-derived totals of one metrics bucket.
+#[derive(Default)]
+struct BucketTotals {
+    functions: i64,
+    cyclomatic: i64,
+    max_nesting: i64,
+    mass: f64,
+    high_complexity_functions: i64,
+    high_complexity_mass: f64,
+}
+
+/// Rewrites the three metrics buckets of `report` for a report whose `.rs`
+/// files and functions were removed: code lines lose the removed analyzed
+/// files, and every function-derived total is recomputed from what is left.
+fn recompute_metrics(report: &mut Value, removed: &[Value]) {
+    for bucket in ["all", "production", "test"] {
+        let in_bucket = |category: &str| bucket == "all" || category == bucket;
+        let removed_lines: i64 = removed
+            .iter()
+            .filter(|file| {
+                file["status"] == "analyzed"
+                    && in_bucket(file["category"].as_str().unwrap_or_default())
+            })
+            .filter_map(|file| file["code_lines"].as_i64())
+            .sum();
+        let mut totals = BucketTotals::default();
+
+        for function in report["functions"].as_array().into_iter().flatten() {
+            if !in_bucket(function["category"].as_str().unwrap_or_default()) {
+                continue;
+            }
+
+            let mass = function["mass"].as_f64().unwrap_or_default();
+
+            totals.functions += 1;
+            totals.cyclomatic += function["cyclomatic"].as_i64().unwrap_or_default();
+            totals.max_nesting = totals
+                .max_nesting
+                .max(function["max_nesting"].as_i64().unwrap_or_default());
+            totals.mass += mass;
+
+            if function["high_complexity"].as_bool().unwrap_or_default() {
+                totals.high_complexity_functions += 1;
+                totals.high_complexity_mass += mass;
+            }
+        }
+
+        let metrics = &mut report["metrics"][bucket];
+
+        if let Some(lines) = metrics["code_lines"].as_i64() {
+            metrics["code_lines"] = Value::from(lines - removed_lines);
+        }
+
+        metrics["functions"] = Value::from(totals.functions);
+        metrics["cyclomatic"] = Value::from(totals.cyclomatic);
+        metrics["max_nesting"] = Value::from(totals.max_nesting);
+        metrics["mass"] = Value::from(totals.mass);
+        metrics["high_complexity_functions"] = Value::from(totals.high_complexity_functions);
+        metrics["high_complexity_mass"] = Value::from(totals.high_complexity_mass);
+        metrics["high_complexity_mass_share"] = if totals.mass == 0.0 {
+            Value::Null
+        } else {
+            Value::from(totals.high_complexity_mass / totals.mass)
+        };
+    }
+}
+
+/// The report without its `.rs` files, functions, and findings, or `None`
+/// when it has none. The Go version never analyzed Rust (it reports `.rs`
+/// as unsupported), so those entries can only differ; the coverage and
+/// metrics totals lose their share too.
+fn without_rust(report: &Value) -> Option<Value> {
+    if !report["files"].as_array()?.iter().any(is_rust_entry) {
+        return None;
+    }
+
+    let mut filtered = report.clone();
+    let removed: Vec<Value> = report["files"]
+        .as_array()?
+        .iter()
+        .filter(|file| is_rust_entry(file))
+        .cloned()
+        .collect();
+
+    for section in ["files", "functions", "findings"] {
+        if let Some(entries) = filtered[section].as_array_mut() {
+            entries.retain(|entry| !is_rust_entry(entry));
+        }
+    }
+
+    for file in &removed {
+        remove_from_coverage(&mut filtered["coverage"], file);
+    }
+
+    recompute_metrics(&mut filtered, &removed);
+
+    Some(filtered)
+}
+
 /// Reduces a JSON audit report (Go or Rust) to its projection.
 ///
 /// Fields projected today: every file's path, category, status, lines, and
@@ -218,8 +360,11 @@ fn pick(object: &Value, names: &[&str]) -> Fields {
 /// bucket's code lines and function-derived totals; and each function's
 /// range, SLOC, cyclomatic, nesting, mass, signals, and flags, keyed by
 /// path, name, and occurrence index; and each finding's range, owner, and
-/// ambiguity, keyed by path, rule, and occurrence index.
+/// ambiguity, keyed by path, rule, and occurrence index. `.rs` files and
+/// everything measured in them are left out first (see [`without_rust`]).
 pub(crate) fn project(report: &Value) -> Projection {
+    let filtered = without_rust(report);
+    let report = filtered.as_ref().unwrap_or(report);
     let mut projection = Projection::default();
 
     for file in report["files"].as_array().into_iter().flatten() {
@@ -474,6 +619,98 @@ mod tests {
             "coverage": {"discovered": 2, "by_category": []},
             "metrics": {"all": {"code_lines": code_lines}},
         })
+    }
+
+    /// A Go file plus a Rust file and function, as the Rust analyzer reports
+    /// them; the Go version reports the same Rust file as unsupported.
+    fn mixed_report() -> Value {
+        let function = |path: &str, name: &str, cyclomatic: i64, nesting: i64, high: bool| {
+            json!({
+                "path": path, "name": name, "category": "production", "sloc": 3,
+                "cyclomatic": cyclomatic, "max_nesting": nesting, "mass": cyclomatic as f64,
+                "high_complexity": high,
+            })
+        };
+        let row = |category: &str, discovered: i64, analyzed: i64, unsupported: i64| {
+            json!({
+                "category": category, "discovered": discovered, "analyzed": analyzed,
+                "excluded": 0, "unsupported": unsupported, "read_errors": 0, "parse_errors": 0,
+            })
+        };
+
+        json!({
+            "files": [
+                {"path": "a.go", "category": "production", "status": "analyzed", "lines": 4, "code_lines": 3},
+                {"path": "src/b.rs", "category": "production", "status": "analyzed", "lines": 9, "code_lines": 7},
+                {"path": "src/c.rs", "category": "unsupported", "status": "unsupported", "lines": 1, "code_lines": 0},
+            ],
+            "functions": [
+                function("a.go", "A", 2, 1, false),
+                function("src/b.rs", "b", 11, 4, true),
+            ],
+            "findings": [
+                {"path": "src/b.rs", "rule": "duplicate-branches", "start": {}, "end": {}},
+            ],
+            "coverage": {
+                "discovered": 3, "analyzed": 2, "excluded": 0, "unsupported": 1,
+                "read_errors": 0, "parse_errors": 0,
+                "by_category": [row("production", 2, 2, 0), row("unsupported", 1, 0, 1)],
+            },
+            "metrics": {
+                "all": {"code_lines": 10, "functions": 2, "cyclomatic": 13, "max_nesting": 4,
+                    "mass": 13.0, "high_complexity_functions": 1, "high_complexity_mass": 11.0,
+                    "high_complexity_mass_share": 0.5},
+                "production": {"code_lines": 10, "functions": 2, "cyclomatic": 13, "max_nesting": 4,
+                    "mass": 13.0, "high_complexity_functions": 1, "high_complexity_mass": 11.0,
+                    "high_complexity_mass_share": 0.5},
+                "test": {"code_lines": 0, "functions": 0, "cyclomatic": 0, "max_nesting": 0,
+                    "mass": 0.0, "high_complexity_functions": 0, "high_complexity_mass": 0.0,
+                    "high_complexity_mass_share": null},
+            },
+        })
+    }
+
+    #[test]
+    fn rust_files_and_their_totals_are_left_out() {
+        let projection = project(&mixed_report());
+        let go_only = json!({
+            "files": [{"path": "a.go", "category": "production", "status": "analyzed", "lines": 4, "code_lines": 3}],
+            "functions": [{
+                "path": "a.go", "name": "A", "category": "production", "sloc": 3, "cyclomatic": 2,
+                "max_nesting": 1, "mass": 2.0, "high_complexity": false,
+            }],
+            "coverage": {
+                "discovered": 1, "analyzed": 1, "excluded": 0, "unsupported": 0,
+                "read_errors": 0, "parse_errors": 0,
+                "by_category": [
+                    {"category": "production", "discovered": 1, "analyzed": 1, "excluded": 0,
+                     "unsupported": 0, "read_errors": 0, "parse_errors": 0},
+                    {"category": "unsupported", "discovered": 0, "analyzed": 0, "excluded": 0,
+                     "unsupported": 0, "read_errors": 0, "parse_errors": 0},
+                ],
+            },
+            "metrics": {
+                "all": {"code_lines": 3, "functions": 1, "cyclomatic": 2, "max_nesting": 1,
+                    "mass": 2.0, "high_complexity_functions": 0, "high_complexity_mass": 0.0,
+                    "high_complexity_mass_share": 0.0},
+                "production": {"code_lines": 3, "functions": 1, "cyclomatic": 2, "max_nesting": 1,
+                    "mass": 2.0, "high_complexity_functions": 0, "high_complexity_mass": 0.0,
+                    "high_complexity_mass_share": 0.0},
+                "test": {"code_lines": 0, "functions": 0, "cyclomatic": 0, "max_nesting": 0,
+                    "mass": 0.0, "high_complexity_functions": 0, "high_complexity_mass": 0.0,
+                    "high_complexity_mass_share": null},
+            },
+        });
+
+        assert_eq!(projection.len("files"), 1);
+        assert_eq!(projection.len("functions"), 1);
+        assert_eq!(projection.len("findings"), 0);
+        assert!(diff(&project(&go_only), &projection).is_empty());
+    }
+
+    #[test]
+    fn reports_without_rust_files_project_unchanged() {
+        assert!(without_rust(&report(5, "analyzed")).is_none());
     }
 
     #[test]

@@ -113,7 +113,7 @@ pub fn analyze(path: &str, category: Category, syntax: &Syntax) -> FileAnalysis 
                         redundant_owner_kinds.contains(&unit.node.kind())
                             && returns_plain_bool(unit.node, &syntax.source)
                     }
-                    BranchShape::Conditional { .. } => false,
+                    BranchShape::Conditional { .. } | BranchShape::Disabled => false,
                 },
                 test_file: category == Category::Test,
             };
@@ -376,7 +376,7 @@ fn scan_body(
     let mut cursor = body.walk();
     let mut pending = vec![(body, 0_u32)];
 
-    while let Some((node, depth)) = pending.pop() {
+    while let Some((node, mut depth)) = pending.pop() {
         let kind = node.kind();
 
         if rules.function_kinds.contains(&kind) {
@@ -390,6 +390,21 @@ fn scan_body(
 
         if short_circuit || rules.decision_kinds.contains(&kind) {
             complexity.cyclomatic += 1;
+        }
+
+        if let Some(weight) = rules.decision_weight {
+            complexity.cyclomatic += weight(node, &syntax.source);
+        }
+
+        // An `else if` sits one level inside the `if` that heads its chain,
+        // but it is not nested deeper than that head.
+        if let Some(chain) = &rules.chained_branch
+            && kind == chain.branch_kind
+            && node
+                .parent()
+                .is_some_and(|parent| parent.kind() == chain.clause_kind)
+        {
+            depth = depth.saturating_sub(1);
         }
 
         let mut inner = depth;

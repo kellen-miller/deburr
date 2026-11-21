@@ -553,6 +553,7 @@ mod tests {
             bytes: 1,
             lines: 1,
             code_lines: 1,
+            inline_test_code_lines: 0,
         });
 
         prefix_paths(&mut report, "sub/dir");

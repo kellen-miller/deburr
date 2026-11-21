@@ -74,7 +74,7 @@ pub fn audit(root: &Path, options: &AuditOptions, progress: &mut dyn Write) -> A
     let mut report = empty_report(options);
     let mut errors = Vec::new();
 
-    say(progress, "scanning Go and TypeScript source");
+    say(progress, "scanning Go, TypeScript, and Rust source");
 
     let discovery = discover::discover(root, options).unwrap_or_else(|error| {
         errors.push(AuditError::Input(error.to_string()));
@@ -269,6 +269,7 @@ fn analyze_file(discovered: DiscoveredFile, keep_tokens: bool) -> FileOutcome {
             bytes: discovered.bytes,
             lines: 0,
             code_lines: 0,
+            inline_test_code_lines: 0,
         },
         source: Vec::new(),
         functions: Vec::new(),
@@ -478,7 +479,7 @@ pub(crate) fn empty_report(options: &AuditOptions) -> Report {
         findings: Vec::new(),
         scope: Scope {
             path_mode: "source-relative".to_owned(),
-            languages: vec!["go".to_owned(), "typescript".to_owned()],
+            languages: vec!["go".to_owned(), "typescript".to_owned(), "rust".to_owned()],
             include_tests: options.include_tests,
             include_testdata: options.include_testdata,
             include_vendor: options.include_vendor,
@@ -493,7 +494,7 @@ pub(crate) fn empty_report(options: &AuditOptions) -> Report {
                     enabled: true,
                 })
                 .collect(),
-            language: "go,typescript".to_owned(),
+            language: "go,typescript,rust".to_owned(),
             duplication: duplication_config,
             max_file_bytes: options.max_file_bytes,
             high_complexity_threshold: HIGH_COMPLEXITY_THRESHOLD,

@@ -32,6 +32,7 @@ pub static RULES: LanguageRules = LanguageRules {
         "type_case",
         "communication_case",
     ],
+    decision_weight: None,
     nesting_kinds: &[
         "if_statement",
         "for_statement",
@@ -39,6 +40,7 @@ pub static RULES: LanguageRules = LanguageRules {
         "type_switch_statement",
         "select_statement",
     ],
+    chained_branch: None,
     binary_kind: "binary_expression",
     short_circuit_operators: &["&&", "||"],
     naming: UnitNaming::Positional { declared_name },
