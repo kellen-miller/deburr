@@ -6,7 +6,7 @@
 //! computed here from deburr's own line map and function table, never from
 //! the detector's line arithmetic.
 
-use std::collections::HashMap;
+use std::ops::Range;
 
 use cpd_core::detect::{PathFilters, PreparedSource, detect_prepared};
 use cpd_core::hash::token_hash;
@@ -35,6 +35,9 @@ pub struct AnalyzedFile<'a> {
     pub language: Language,
     pub source: &'a [u8],
     pub tokens: &'a [Token],
+    /// Runs of `tokens` that were contiguous in the source. Each run is its
+    /// own detector source, so no clone spans code removed between two runs.
+    pub segments: &'a [Range<usize>],
     /// Index `n - 1` is true when line `n` holds code (of this category).
     pub code_lines: &'a [bool],
     /// The file's functions as reported, so clone endpoints can name them.
@@ -66,6 +69,12 @@ struct Region<'a> {
     content: Vec<u8>,
 }
 
+/// Where a detector source's tokens begin: its file and token offset.
+struct SegmentStart {
+    file: usize,
+    first_token: usize,
+}
+
 /// Format names group files so a Go file never pairs with a TypeScript or
 /// Rust one; `.ts` and `.tsx` share a token model and a group.
 const FORMATS: [&str; 3] = ["go", "typescript", "rust"];
@@ -88,38 +97,50 @@ pub fn detect(
 ) -> Result<CategoryDuplication, DuplicationError> {
     let mut groups: [Vec<PreparedSource>; 3] = [Vec::new(), Vec::new(), Vec::new()];
 
-    for file in files
-        .iter()
-        .filter(|file| file.tokens.len() >= settings.min_tokens)
-    {
-        let tokens: Vec<DetectionToken> = file
-            .tokens
-            .iter()
-            .map(|token| {
-                let text = String::from_utf8_lossy(identity::token_text(file.source, token));
-                let hash = token_hash(0, &text);
+    // Each segment is a detector source of its own, named by its index in
+    // `segment_starts`, which maps a fragment back to its file and to the
+    // segment's first token (fragment ranges index the segment's tokens).
+    let mut segment_starts: Vec<SegmentStart> = Vec::new();
 
-                DetectionToken {
-                    hash,
-                    raw_hash: hash,
-                    name: 0,
-                    start: location(token.start, token.bytes.start),
-                    end: location(token.end, token.bytes.end),
-                    range: [token.bytes.start, token.bytes.end],
-                }
-            })
-            .collect();
+    for (file_index, file) in files.iter().enumerate() {
         let slot = match file.language {
             Language::Go => 0,
             Language::TypeScript | Language::Tsx => 1,
             Language::Rust => 2,
         };
 
-        groups[slot].push(PreparedSource::from_detection_tokens(
-            file.path.to_owned(),
-            FORMATS[slot].to_owned(),
-            &tokens,
-        ));
+        for segment in file
+            .segments
+            .iter()
+            .filter(|segment| segment.len() >= settings.min_tokens)
+        {
+            let tokens: Vec<DetectionToken> = file.tokens[segment.clone()]
+                .iter()
+                .map(|token| {
+                    let text = String::from_utf8_lossy(identity::token_text(file.source, token));
+                    let hash = token_hash(0, &text);
+
+                    DetectionToken {
+                        hash,
+                        raw_hash: hash,
+                        name: 0,
+                        start: location(token.start, token.bytes.start),
+                        end: location(token.end, token.bytes.end),
+                        range: [token.bytes.start, token.bytes.end],
+                    }
+                })
+                .collect();
+
+            groups[slot].push(PreparedSource::from_detection_tokens(
+                segment_starts.len().to_string(),
+                FORMATS[slot].to_owned(),
+                &tokens,
+            ));
+            segment_starts.push(SegmentStart {
+                file: file_index,
+                first_token: segment.start,
+            });
+        }
     }
 
     let groups: Vec<Vec<PreparedSource>> = groups
@@ -130,11 +151,6 @@ pub fn detect(
     let detected =
         pool.install(|| detect_prepared(groups, settings.min_tokens, 0, &PathFilters::default()));
 
-    let indexes: HashMap<&str, usize> = files
-        .iter()
-        .enumerate()
-        .map(|(index, file)| (file.path, index))
-        .collect();
     let mut covered: Vec<Vec<bool>> = files
         .iter()
         .map(|file| vec![false; file.code_lines.len()])
@@ -143,9 +159,9 @@ pub fn detect(
 
     for clone in &detected {
         let regions = [&clone.fragment_a, &clone.fragment_b].map(|fragment| {
-            let file = *indexes.get(fragment.source_id.as_str())?;
+            let start = segment_starts.get(fragment.source_id.parse::<usize>().ok()?)?;
 
-            region(file, &files[file], fragment)
+            region(start.file, &files[start.file], start.first_token, fragment)
         });
         let [Some(first), Some(second)] = regions else {
             continue;
@@ -242,13 +258,19 @@ fn location(position: Position, offset: usize) -> Location {
     )
 }
 
-/// Turns one detected fragment (token indexes into its file's tokens) into a
-/// region. Synthetic terminators at either end are not part of the reported
-/// span; a fragment of nothing but terminators has no region.
-fn region<'a>(file: usize, analyzed: &AnalyzedFile<'a>, fragment: &Fragment) -> Option<Region<'a>> {
+/// Turns one detected fragment (token indexes into its segment, which starts
+/// at `first_token` of the file's tokens) into a region. Synthetic
+/// terminators at either end are not part of the reported span; a fragment
+/// of nothing but terminators has no region.
+fn region<'a>(
+    file: usize,
+    analyzed: &AnalyzedFile<'a>,
+    first_token: usize,
+    fragment: &Fragment,
+) -> Option<Region<'a>> {
     let run = analyzed
         .tokens
-        .get(fragment.range[0] as usize..=fragment.range[1] as usize)?;
+        .get(first_token + fragment.range[0] as usize..=first_token + fragment.range[1] as usize)?;
     let first = run.iter().position(|token| !token.is_terminator())?;
     let last = run.iter().rposition(|token| !token.is_terminator())?;
     let run = &run[first..=last];
