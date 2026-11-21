@@ -55,7 +55,12 @@ fn rust_report(root: &Path) -> serde_json::Value {
 }
 
 fn summary(projection: &Projection) -> String {
-    format!("files {}", projection.len("files"))
+    format!(
+        "files {}, functions {}, findings {}",
+        projection.len("files"),
+        projection.len("functions"),
+        projection.len("findings")
+    )
 }
 
 #[test]
