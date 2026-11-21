@@ -18,6 +18,11 @@ use serde_json::Value;
 
 const FLOAT_TOLERANCE: f64 = 1e-9;
 
+/// The structural signals compared per function. The remaining signals
+/// (`flat_guards`, `field_mappings`, `assertion_like_calls`) join this list
+/// with the findings milestone, which implements them.
+const FUNCTION_SIGNALS: &[&str] = &["nested_branches"];
+
 /// One projected value.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Scalar {
@@ -108,9 +113,10 @@ fn pick(object: &Value, names: &[&str]) -> Fields {
 /// Reduces a JSON audit report (Go or Rust) to its projection.
 ///
 /// Fields projected today: every file's path, category, status, lines, and
-/// code lines; the coverage totals and per-category rows; and each metric
-/// bucket's code lines. Function-derived bucket fields, functions, and
-/// findings join the projection when the analysis milestones land.
+/// code lines; the coverage totals and per-category rows; every metric
+/// bucket's code lines and function-derived totals; and each function's
+/// range, SLOC, cyclomatic, nesting, mass, signals, and flags, keyed by
+/// path, name, and occurrence index. Findings join with their milestone.
 pub(crate) fn project(report: &Value) -> Projection {
     let mut projection = Projection::default();
 
@@ -149,8 +155,62 @@ pub(crate) fn project(report: &Value) -> Projection {
         projection.insert(
             "metrics",
             bucket,
-            pick(&report["metrics"][bucket], &["code_lines"]),
+            pick(
+                &report["metrics"][bucket],
+                &[
+                    "code_lines",
+                    "functions",
+                    "cyclomatic",
+                    "max_nesting",
+                    "mass",
+                    "high_complexity_functions",
+                    "high_complexity_mass",
+                    "high_complexity_mass_share",
+                ],
+            ),
         );
+    }
+
+    for function in report["functions"].as_array().into_iter().flatten() {
+        let key = format!(
+            "{}::{}",
+            function["path"].as_str().unwrap_or_default(),
+            function["name"].as_str().unwrap_or_default()
+        );
+        let mut fields = pick(
+            function,
+            &[
+                "sloc",
+                "cyclomatic",
+                "max_nesting",
+                "mass",
+                "high_complexity",
+            ],
+        );
+
+        // The Rust report omits a false flag; Go writes it.
+        fields.insert(
+            "identity_ambiguous".to_owned(),
+            Scalar::Bool(function["identity_ambiguous"].as_bool().unwrap_or(false)),
+        );
+
+        for (prefix, position) in [("start", &function["start"]), ("end", &function["end"])] {
+            for part in ["line", "column"] {
+                fields.insert(
+                    format!("{prefix}_{part}"),
+                    Scalar::from_json(position.get(part)),
+                );
+            }
+        }
+
+        for signal in FUNCTION_SIGNALS {
+            fields.insert(
+                format!("signal_{signal}"),
+                Scalar::from_json(function["structural_signals"].get(*signal)),
+            );
+        }
+
+        projection.insert("functions", &key, fields);
     }
 
     projection

@@ -736,6 +736,5 @@ fn duplication_is_not_run_yet() {
         report.duplication.status,
         deburr::report::DuplicationStatus::NotRequested
     );
-    assert!(report.functions.is_empty());
     assert!(report.findings.is_empty());
 }
