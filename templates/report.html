@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Deburr report</title>
+<style>
+body { font: 15px system-ui, sans-serif; margin: 2rem; color: #202124; }
+table { border-collapse: collapse; margin: 1rem 0 2rem; width: 100%; }
+th, td { border: 1px solid #dadce0; padding: .4rem .6rem; text-align: left; vertical-align: top; }
+th { background: #f1f3f4; }
+code { white-space: pre-wrap; overflow-wrap: anywhere; }
+.error { color: #b00020; }
+.filters { display: flex; flex-wrap: wrap; gap: .75rem; align-items: end; }
+.filters label { display: flex; flex-direction: column; gap: .2rem; }
+.filters input, .filters select { min-width: 10rem; padding: .35rem; }
+[hidden] { display: none; }
+</style>
+</head>
+<body>
+<h1>Deburr report</h1>
+<p>Schema <code>{{ report.schema_version }}</code>; analyzer <code>{{ analyzer }}</code>; language <code>{{ report.config.language }}</code>.</p>
+<p>Scope <code>{{ scope }}</code>.</p>
+<p>Provenance <code>{{ provenance }}</code>.</p>
+<h2>Coverage</h2>
+<table><tr><th>Discovered</th><th>Analyzed</th><th>Excluded</th><th>Unsupported</th><th>Read errors</th><th>Parse errors</th><th>Symlinks</th><th>Excluded directories</th></tr>
+<tr><td>{{ report.coverage.discovered }}</td><td>{{ report.coverage.analyzed }}</td><td>{{ report.coverage.excluded }}</td><td>{{ report.coverage.unsupported }}</td><td>{{ report.coverage.read_errors }}</td><td>{{ report.coverage.parse_errors }}</td><td>{{ report.coverage.symlinks }}</td><td>{{ report.coverage.excluded_directories }}</td></tr></table>
+{% if report.coverage.analyzed == 0 %}<p class="error">No analyzable Go or TypeScript files were found.</p>{% endif %}
+<h2>Metrics</h2>
+<table><tr><th>Bucket</th><th>Code lines</th><th>Functions</th><th>Cyclomatic</th><th>Max nesting</th><th>Mass</th><th>High complexity functions</th><th>High complexity mass</th><th>High complexity mass share</th></tr>
+{% for metric in metrics %}<tr><td>{{ metric.label }}</td><td>{{ metric.code_lines }}</td><td>{{ metric.functions }}</td><td>{{ metric.cyclomatic }}</td><td>{{ metric.max_nesting }}</td><td>{{ metric.mass }}</td><td>{{ metric.high_complexity_functions }}</td><td>{{ metric.high_complexity_mass }}</td><td>{{ metric.share }}</td></tr>
+{% endfor %}</table>
+<h2>Review inventory</h2>
+<p>Function hotspots ({{ hotspot_count }} high-complexity of {{ function_count }} functions) are ranked by raw mass with stable ties. Function inventory ({{ function_count }}), native findings ({{ finding_count }}), and Duplication clones ({{ clone_count }}) are all included below.</p>
+<p>Primary review items: {{ review_counts.total }}. Review status: unreviewed={{ review_counts.unreviewed }}, refactored={{ review_counts.refactored }}, retained={{ review_counts.retained }}, deferred={{ review_counts.deferred }}, stale={{ review_counts.stale }}. Non-hotspot function rows are raw observed inventory. A missing row never proves a comparison item was resolved.</p>
+<div class="filters">
+<label>Search<input id="inventory-search" type="search" placeholder="ID, path, reason, or upstream"></label>
+<label>View<select id="inventory-view"><option value="review">review items</option><option value="">all inventory</option></select></label>
+<label>Kind<select id="inventory-kind"><option value="">all</option><option value="function">function</option><option value="finding">finding</option><option value="clone">clone</option></select></label>
+<label>Category<select id="inventory-category"><option value="">all</option>{% for option in category_options %}<option value="{{ option }}">{{ option }}</option>{% endfor %}</select></label>
+<label>Status<select id="inventory-status"><option value="">all</option>{% for option in status_options %}<option value="{{ option }}">{{ option }}</option>{% endfor %}</select></label>
+</div>
+<p>Showing <strong id="inventory-visible">{{ review_counts.total }}</strong> of {{ rows.len() }} inventory rows.</p>
+<table id="review-inventory"><thead><tr><th>Kind</th><th>Category</th><th>Status</th><th>Location</th><th>ID / subject</th><th>Metrics</th><th>Reason</th><th>Evidence</th><th>Upstream</th><th>Previous</th></tr></thead><tbody>
+{% for row in rows %}<tr data-review-row data-review="{{ row.review }}" data-kind="{{ row.kind }}" data-category="{{ row.category }}" data-status="{{ row.status }}" data-stale="{{ row.stale }}" data-search="{{ row.search }}"><td>{{ row.kind }}</td><td>{{ row.category }}</td><td>{{ row.status }}{% if row.stale %} (stale){% endif %}</td><td><code>{{ row.location }}</code></td><td><code>{{ row.id }}</code>{% if !row.fingerprint.is_empty() %}<br><code>fp: {{ row.fingerprint }}</code>{% endif %}<br>{{ row.subject }}</td><td><code>{{ row.metrics }}</code></td><td>{% if !row.reason_category.is_empty() %}<code>{{ row.reason_category }}</code>: {% endif %}{% if !row.reason.is_empty() %}{{ row.reason }}{% else %}&mdash;{% endif %}</td><td>{% if !row.evidence.is_empty() %}{{ row.evidence }}{% else %}&mdash;{% endif %}</td><td>{% if !row.upstream.is_empty() %}{{ row.upstream }}{% else %}&mdash;{% endif %}</td><td>{% if !row.previous.is_empty() %}{{ row.previous }}{% else %}&mdash;{% endif %}</td></tr>{% else %}<tr><td colspan="10">No inventory rows.</td></tr>{% endfor %}
+</tbody></table>
+<script>
+(function () {
+  const rows = Array.from(document.querySelectorAll("[data-review-row]"));
+  const search = document.getElementById("inventory-search");
+  const view = document.getElementById("inventory-view");
+  const kind = document.getElementById("inventory-kind");
+  const category = document.getElementById("inventory-category");
+  const status = document.getElementById("inventory-status");
+  const visible = document.getElementById("inventory-visible");
+
+  function update() {
+    const query = search.value.trim().toLowerCase();
+    const selectedView = view.value;
+    const selectedKind = kind.value;
+    const selectedCategory = category.value;
+    const selectedStatus = status.value;
+    let count = 0;
+    rows.forEach((row) => {
+      const matches = (!query || row.dataset.search.toLowerCase().includes(query)) &&
+        (!selectedView || row.dataset.review === "true") &&
+        (!selectedKind || row.dataset.kind === selectedKind) &&
+        (!selectedCategory || row.dataset.category === selectedCategory) &&
+        (!selectedStatus || row.dataset.status === selectedStatus);
+      row.hidden = !matches;
+      if (matches) {
+        count++;
+      }
+    });
+    visible.textContent = String(count);
+  }
+
+  [search, view, kind, category, status].forEach((control) => {
+    control.addEventListener("input", update);
+    control.addEventListener("change", update);
+  });
+  update();
+})();
+</script>
+<h2>Duplication</h2>
+<p>Status <code>{{ duplication_status }}</code>; min tokens <code>{{ report.duplication.min_tokens }}</code>; min lines <code>{{ report.duplication.min_lines }}</code>; {{ clone_count }} clones are included in the complete review inventory above{% if !report.duplication.error.is_empty() %}; error <span class="error">{{ report.duplication.error }}</span>{% endif %}.</p>
+{% for category in duplication_categories %}<p>{{ category.category }}: {{ category.percentage }}% duplication ({{ category.duplicated_code_lines }} of {{ category.code_lines }} code lines across {{ category.files }} files).</p>
+{% endfor %}{% if !clones.is_empty() %}<table><tr><th>Clone</th><th>Category</th><th>Tokens</th><th>Endpoint</th><th>Code lines</th><th>Functions</th></tr>
+{% for clone in clones %}{% for endpoint in clone.endpoints %}<tr>{% if loop.first %}<td rowspan="{{ clone.endpoints.len() }}"><code>{{ clone.id }}</code><br>family <code>{{ clone.family_id }}</code>{% if clone.ambiguous %}<br>identity ambiguous{% endif %}</td><td rowspan="{{ clone.endpoints.len() }}">{{ clone.category }}</td><td rowspan="{{ clone.endpoints.len() }}">{{ clone.tokens }}</td>{% endif %}<td><code>{{ endpoint.location }}</code></td><td>{{ endpoint.code_lines }}</td><td><code>{{ endpoint.functions }}</code></td></tr>
+{% endfor %}{% endfor %}</table>
+{% endif %}<details><summary>File inventory ({{ files.len() }})</summary>
+<table><tr><th>Path</th><th>Category</th><th>Status</th><th>Bytes</th><th>Lines</th><th>Code lines</th><th>Reason</th><th>Error</th></tr>
+{% for file in files %}<tr><td><code>{{ file.path }}</code></td><td>{{ file.category }}</td><td>{{ file.status }}</td><td>{{ file.bytes }}</td><td>{{ file.lines }}</td><td>{{ file.code_lines }}</td><td>{{ file.reason }}</td><td class="error">{{ file.error }}</td></tr>{% else %}<tr><td colspan="8">No files.</td></tr>{% endfor %}
+</table>
+</details>
+</body>
+</html>
